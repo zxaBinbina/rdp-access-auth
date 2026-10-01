@@ -1,0 +1,12 @@
+tunnel: REPLACE_WITH_TUNNEL_UUID
+credentials-file: /run/credentials/cloudflared-rdp-access.service/tunnel.json
+protocol: http2
+edge-ip-version: "4"
+loglevel: warn
+ingress:
+  - hostname: auth.example.com
+    service: http://127.0.0.1:18089
+    originRequest:
+      httpHostHeader: auth.example.com
+      connectTimeout: 10s
+  - service: http_status:404

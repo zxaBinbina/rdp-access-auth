@@ -1,0 +1,29 @@
+[Unit]
+Description=Cloudflare Tunnel for private RDP authentication
+Wants=network-online.target rdp-access-auth.service
+After=network-online.target rdp-access-auth.service
+
+[Service]
+Type=simple
+DynamicUser=yes
+LoadCredential=tunnel.json:/etc/rdp-access-auth/cloudflare-tunnel.json
+LoadCredential=config.yml:/etc/rdp-access-auth/cloudflared.yml
+ExecStart=/usr/bin/cloudflared --config %d/config.yml --no-autoupdate tunnel run
+Restart=on-failure
+RestartSec=5s
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=yes
+MemoryMax=256M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

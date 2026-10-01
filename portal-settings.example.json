@@ -1,0 +1,9 @@
+{
+  "hostname": "auth.example.com",
+  "rdp_address": "desktop.example.com:26869",
+  "tunnel_id": 12345,
+  "password_salt": "GENERATE_WITH_tools/init_config.py",
+  "password_hash": "GENERATE_WITH_tools/init_config.py",
+  "session_key": "GENERATE_WITH_tools/init_config.py",
+  "sakura_token": "ENTER_INTERACTIVELY_WITH_tools/init_config.py"
+}

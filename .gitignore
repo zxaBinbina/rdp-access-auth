@@ -1,0 +1,13 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.cache/
+private/
+logs/
+*.sqlite*
+*.db
+.env
+wordlists/objects.json
+*.pem
+*.key

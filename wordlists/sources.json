@@ -1,0 +1,51 @@
+[
+  {
+    "file": "food.txt",
+    "url": "https://raw.githubusercontent.com/thunlp/THUOCL/master/data/THUOCL_food.txt",
+    "category": "美食",
+    "entries": 8974,
+    "sha256": "084caa96ad4f976720003e9420097ba7cb5ddbb17f9f8c8f76bc4b8e0cc777fd"
+  },
+  {
+    "file": "minecraft-zh_cn.json",
+    "url": "https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/1.21.1/assets/minecraft/lang/zh_cn.json",
+    "category": "Minecraft 游戏名词",
+    "entries": 1547,
+    "sha256": "11ab9aa49010507c32b4fa1f710645c580fd3c2096e3b87a8a1964cb93006a4d"
+  },
+  {
+    "file": "genshin-characters.json",
+    "url": "https://genshin-db-api.vercel.app/api/v5/characters?query=names&matchCategories=true&resultLanguage=ChineseSimplified",
+    "category": "原神 characters",
+    "entries": 118,
+    "sha256": "112ee23bb0c85f4194c91a90d0f743f8607a8a955a921e934dcf13a3240dbc51"
+  },
+  {
+    "file": "genshin-weapons.json",
+    "url": "https://genshin-db-api.vercel.app/api/v5/weapons?query=names&matchCategories=true&resultLanguage=ChineseSimplified",
+    "category": "原神 weapons",
+    "entries": 252,
+    "sha256": "2bb8239064188ce1bce87924aa4234a2e119b79b6c0ec35cb4c1e61a9f5e7d92"
+  },
+  {
+    "file": "genshin-materials.json",
+    "url": "https://genshin-db-api.vercel.app/api/v5/materials?query=names&matchCategories=true&resultLanguage=ChineseSimplified",
+    "category": "原神 materials",
+    "entries": 793,
+    "sha256": "92637f61cdfeff15ab4dbda679df5a83d434c857ffeb7e2db269ecee7a38b513"
+  },
+  {
+    "file": "genshin-foods.json",
+    "url": "https://genshin-db-api.vercel.app/api/v5/foods?query=names&matchCategories=true&resultLanguage=ChineseSimplified",
+    "category": "原神 foods",
+    "entries": 389,
+    "sha256": "40fe2c5725849dd63c728f00b62dc364abc25b8f0a899d79522be2019e50f600"
+  },
+  {
+    "file": "genshin-artifacts.json",
+    "url": "https://genshin-db-api.vercel.app/api/v5/artifacts?query=names&matchCategories=true&resultLanguage=ChineseSimplified",
+    "category": "原神 artifacts",
+    "entries": 63,
+    "sha256": "3e79d78853ea6909412e1ce440f5f3192fb3f4088ca758923ee2e7bdb02697a9"
+  }
+]
