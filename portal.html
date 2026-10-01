@@ -27,8 +27,37 @@ nav{display:flex;gap:8px;flex-wrap:wrap;margin:20px 0}nav a{padding:6px 10px;bor
 {% elif method == 'temporary' %}<label for="temporary">临时访问密码</label><input id="temporary" name="temporary" type="password" required maxlength="256" autocomplete="off" placeholder="事物词一-事物词二-事物词三"><p>输入当前的三个中文词，用横线或空格分隔。认证成功后，将从游戏与美食名词中生成下一条密码并在本页显示。首次使用可先用固定密码登录，查看当前临时密码。</p>
 {% else %}<p>使用已绑定的通行密钥。首次使用请先通过固定密码或临时密码登录，在成功页绑定。</p><noscript><p class="notice">通行密钥需要启用 JavaScript；也可选择固定密码或临时密码。</p></noscript>{% endif %}
 <details {% if ipv6 %}open{% endif %}><summary>连接网络的 IPv4{% if not ipv6 %}（已检测）{% endif %}</summary><label for="ipv4">远程桌面使用的公网 IPv4</label><input id="ipv4" name="ipv4" maxlength="15" value="{{ '' if ipv6 else client_ip }}" placeholder="正在检测 IPv4 出口" autocomplete="off" required><p id="ip-status">{% if ipv6 %}正在检测当前网络的 IPv4，请稍候。{% else %}已检测当前网络。如果远程桌面使用其他出口，请填入该出口的公网 IPv4。{% endif %}</p><p>检测不成功时，可<a href="https://ipv4.icanhazip.com" target="_blank" rel="noopener noreferrer">打开检测页</a>，将显示的 IPv4 填入上方。</p></details>
+{% if turnstile_site_key %}<div id="turnstile-widget"></div><p id="turnstile-status" role="status">正在加载人机验证…</p>{% endif %}
 <button type="submit">{{ '使用通行密钥连接' if method == 'passkey' else '允许连接' }}</button><p id="passkey-status" role="status"></p></form><p class="small">连续失败 5 次封禁该 IP 15 分钟；10 分钟内 5 个不同 IP 被封禁时，全站锁定 15 分钟。</p>{% endif %}
 <footer>授权有效期 6 小时。到期、切换网络或主机重启后，请重新授权。浏览器与远程桌面需使用同一公网出口。</footer></main>
+{% if turnstile_site_key and not success and not manage %}
+<script nonce="{{ nonce }}">
+let turnstileWidgetId;
+const turnstileStatus = document.getElementById('turnstile-status');
+window.readTurnstile = () => {
+ const token = turnstileWidgetId === undefined ? '' : window.turnstile.getResponse(turnstileWidgetId);
+ if (!token) throw new Error('请先完成人机验证，再提交认证。');
+ return token;
+};
+window.resetTurnstile = () => {
+ if (turnstileWidgetId !== undefined) window.turnstile.reset(turnstileWidgetId);
+};
+window.onTurnstileReady = () => {
+ turnstileWidgetId = window.turnstile.render('#turnstile-widget', {
+  sitekey: {{ turnstile_site_key|tojson }}, action: {{ ('login_' + method)|tojson }}, size: 'flexible',
+  callback: () => {turnstileStatus.textContent = '人机验证已完成。';},
+  'expired-callback': () => {turnstileStatus.textContent = '人机验证已过期，请重新验证。';window.resetTurnstile();},
+  'error-callback': () => {turnstileStatus.textContent = '人机验证加载失败，请检查网络或刷新页面。';}
+ });
+};
+document.getElementById('auth-form').addEventListener('submit', e => {
+ try {window.readTurnstile();} catch(err) {
+  e.preventDefault();e.stopImmediatePropagation();turnstileStatus.textContent = err.message;
+ }
+});
+</script>
+<script nonce="{{ nonce }}" src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileReady&amp;render=explicit" async defer></script>
+{% endif %}
 {% if ipv6 and not success and not manage %}<script nonce="{{ nonce }}">
 const ipField = document.getElementById('ipv4');
 const ipStatus = document.getElementById('ip-status');
@@ -76,11 +105,12 @@ async function ceremony(register, button) {
   if(register){opts.user.id=fromB64(opts.user.id);for(const c of opts.excludeCredentials||[])c.id=fromB64(c.id);}
   else for(const c of opts.allowCredentials||[])c.id=fromB64(c.id);
   const credential=register?await navigator.credentials.create({publicKey:opts}):await navigator.credentials.get({publicKey:opts});
-  const result=await post(prefix+'/verify',{challenge_id:data.challenge_id,credential:serialize(credential),
+  const turnstileToken = !register && window.readTurnstile ? window.readTurnstile() : undefined;
+  const result=await post(prefix+'/verify',{'cf-turnstile-response':turnstileToken,challenge_id:data.challenge_id,credential:serialize(credential),
     name:register?document.getElementById('key-name').value:undefined,ipv4:register?undefined:document.getElementById('ipv4').value});
   window.location.assign(result.redirect);
  } catch(e) {statusLine.textContent=e.name==='NotAllowedError'?'操作已取消或超时。请重试，或改用密码登录。':e.message;}
- finally {button.disabled=false;}
+ finally {if (!register && window.resetTurnstile) window.resetTurnstile();button.disabled=false;}
 }
 {% if manage %}document.getElementById('register-key').addEventListener('click',e=>ceremony(true,e.currentTarget));
 {% else %}document.getElementById('auth-form').addEventListener('submit',e=>{e.preventDefault();ceremony(false,e.currentTarget.querySelector('button'));});{% endif %}

@@ -9,4 +9,4 @@ jobs:
         with:
           python-version: '3.14'
       - run: python -m pip install -r requirements.txt
-      - run: python -m unittest -q test_auth_guard.py test_portal.py
+      - run: python -m unittest -q test_auth_guard.py test_portal.py test_turnstile.py

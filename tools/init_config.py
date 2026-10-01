@@ -27,10 +27,15 @@ def main():
     token = getpass.getpass('SakuraFrp API Token：').strip()
     if not token:
         p.error('API Token 不能为空')
+    sitekey = input('Turnstile Site key（留空则不启用）：').strip()
+    turnstile_secret = getpass.getpass('Turnstile Secret key：').strip() if sitekey else ''
+    if sitekey and not turnstile_secret:
+        p.error('启用 Turnstile 时 Secret key 不能为空')
     salt = secrets.token_hex(16)
     config = dict(hostname=args.hostname, rdp_address=args.rdp_address, tunnel_id=args.tunnel_id,
         password_salt=salt, password_hash=hashlib.scrypt(password.encode(), salt=bytes.fromhex(salt), n=16384, r=8, p=1).hex(),
-        session_key=secrets.token_hex(32), sakura_token=token)
+        session_key=secrets.token_hex(32), sakura_token=token,
+        turnstile_site_key=sitekey, turnstile_secret_key=turnstile_secret)
     os.umask(0o077)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open('x') as f:

@@ -179,7 +179,7 @@ sudo python3 /opt/rdp-access-auth/tools/admin.py unlock
 
 ```bash
 .venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m unittest -q test_auth_guard.py test_portal.py
+.venv/bin/python -m unittest -q test_auth_guard.py test_portal.py test_turnstile.py
 ```
 
 单元测试使用临时数据库和合成词库，不需要真实密码、Token、域名、Cloudflare 或 SakuraFrp 账户。覆盖密码轮换、并发、封禁、CSRF、来源、IPv4 和 WebAuthn 签名/重放等行为。仓库提供 GitHub Actions 测试工作流。
@@ -199,3 +199,36 @@ test_*.py                     离线测试
 ## 许可证与第三方数据
 
 项目代码采用 [MIT License](LICENSE)。游戏和美食词库由部署者从公开来源下载，权利仍属于相应作者或权利人，详见 [词库来源说明](wordlists/readme.md)。本项目与 Cloudflare、SakuraFrp、Minecraft、原神及词库维护者没有从属或背书关系。
+
+
+## Cloudflare Turnstile（可选）
+
+在 Cloudflare Turnstile 创建或选用已有组件，允许的主机名需包含实际认证域名
+（例如 `auth.example.com`）。将 Site key 和 Secret key 分别写入服务器私有配置的
+`turnstile_site_key`、`turnstile_secret_key` 字段；初始化工具也会交互询问。
+两项都留空时不启用，只填写其中一项会拒绝启动。已有部署请编辑原配置，保留
+原密码哈希、会话密钥及其他字段，不要重新初始化。配置文件保持 root 所有、0600 权限，
+通过现有 systemd `LoadCredential` 提供给服务，然后重启认证服务。
+Secret key 不可放进 HTML、源码仓库或日志。示例配置不包含任何真实密钥。
+
+三种登录均需要先通过人机验证，后端在原认证处理器中调用 Siteverify：
+
+| 登录方式 | 处理器 | Turnstile action |
+| --- | --- | --- |
+| 固定密码 | `/authorize` | `login_password` |
+| 临时密码 | `/authorize` | `login_temporary` |
+| 通行密钥 | `/passkeys/auth/verify` | `login_passkey` |
+
+服务端要求 `success` 严格为 true、action 匹配且 hostname 等于配置的认证域名；
+生产环境不会接受 localhost。客户端 IP 取自可信本机 Cloudflare Tunnel 的
+`CF-Connecting-IP`，不使用用户填写的 IPv4 做人机校验。
+Siteverify 超时为 10 秒，错误时拒绝认证，但不计入密码失败次数、不轮换临时密码。
+有效的人机验证不能代替密码或通行密钥。管理页仍使用已认证的短期会话和 CSRF 校验。
+
+令牌由 Cloudflare 限制为一次性、有效期 5 分钟；通行密钥流程每次尝试后重置组件，
+普通表单提交后由新页面生成组件。浏览器必须能访问 `challenges.cloudflare.com`，
+服务端必须能出站访问它的 Siteverify 接口；页面 CSP 已允许所需脚本和 iframe。
+
+验证：`python -m unittest -q test_auth_guard.py test_portal.py test_turnstile.py`。
+上线时还应使用真实浏览器完成一次登录，并确认重放同一个 Turnstile 令牌被拒绝。
+测试中的模拟响应不代替真实组件的部署验证。

@@ -5,5 +5,7 @@
   "password_salt": "GENERATE_WITH_tools/init_config.py",
   "password_hash": "GENERATE_WITH_tools/init_config.py",
   "session_key": "GENERATE_WITH_tools/init_config.py",
-  "sakura_token": "ENTER_INTERACTIVELY_WITH_tools/init_config.py"
+  "sakura_token": "ENTER_INTERACTIVELY_WITH_tools/init_config.py",
+  "turnstile_site_key": "",
+  "turnstile_secret_key": ""
 }

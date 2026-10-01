@@ -11,7 +11,7 @@ import sqlite3
 import time
 import urllib.error
 import urllib.request
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlencode
 
 from flask import Flask, abort, g, redirect, render_template_string, request, session, jsonify
 from auth_guard import AuthGuard
@@ -20,6 +20,12 @@ from auth_credentials import TemporaryPasswords, Passkeys, password_hash
 PAGE = Path(__file__).with_name('portal.html').read_text()
 
 def create_app(settings, state_path, authorize_callback=None):
+    sitekey = settings.get('turnstile_site_key', '')
+    turnstile_secret = settings.get('turnstile_secret_key', '')
+    if bool(sitekey) != bool(turnstile_secret) or any(
+            not isinstance(v, str) or (v and (v != v.strip() or any(c.isspace() for c in v)))
+            for v in (sitekey, turnstile_secret)):
+        raise ValueError('Turnstile requires both a site key and a secret key')
     app = Flask(__name__)
     app.config.update(SECRET_KEY=settings['session_key'], MAX_CONTENT_LENGTH=65536,
                       SESSION_COOKIE_NAME='__Host-rdp-auth', SESSION_COOKIE_SECURE=True,
@@ -102,7 +108,8 @@ def create_app(settings, state_path, authorize_callback=None):
         response.headers['Cache-Control'] = 'no-store, max-age=0'
         response.headers['Content-Security-Policy'] = (
             "default-src 'none'; style-src 'nonce-" + g.get('nonce', '') + "'; "
-            "script-src 'nonce-" + g.get('nonce', '') + "'; connect-src 'self' https://api.ipify.org https://ipv4.icanhazip.com; "
+            "script-src 'nonce-" + g.get('nonce', '') + "' https://challenges.cloudflare.com; connect-src 'self' https://api.ipify.org https://ipv4.icanhazip.com https://challenges.cloudflare.com; "
+            "frame-src https://challenges.cloudflare.com; "
             "form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['X-Frame-Options'] = 'DENY'
@@ -115,7 +122,7 @@ def create_app(settings, state_path, authorize_callback=None):
         if method not in ('password', 'temporary', 'passkey'):
             method = 'password'
         return render_template_string(PAGE, nonce=g.nonce, message=message, success=success,
-                 method=method, **extra,
+                 method=method, turnstile_site_key=sitekey, **extra,
                  client_ip=g.get('ip', ''), authorized_ips=g.get('authorized_ips', []),
                  ipv6=':' in g.get('ip', ''), csrf=session.get('csrf', ''), rdp=settings['rdp_address']), status
 
@@ -175,6 +182,30 @@ def create_app(settings, state_path, authorize_callback=None):
         guard.finish(token, False)
         wait, scope = guard.locked(g.ip)
         return locked_response(wait, scope) if wait else error(message, 401)
+
+    def check_turnstile(action):
+        if not sitekey:
+            return None
+        token = fields().get('cf-turnstile-response', '')
+        if not isinstance(token, str) or not token.strip() or len(token) > 2048:
+            return error('请先完成人机验证，再提交认证。', 403)
+        payload = urlencode({'secret': turnstile_secret, 'response': token, 'remoteip': g.ip}).encode()
+        req = urllib.request.Request('https://challenges.cloudflare.com/turnstile/v0/siteverify',
+                data=payload, headers={'Content-Type': 'application/x-www-form-urlencoded'})
+        try:
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            with opener.open(req, timeout=10) as response:
+                if response.status != 200:
+                    raise ValueError('Unexpected Siteverify status')
+                result = json.load(response)
+            if not isinstance(result, dict):
+                raise ValueError('Unexpected Siteverify response')
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+            return error('人机验证服务暂时不可用，请稍后重试。', 503)
+        if (result.get('success') is not True or result.get('action') != action
+                or result.get('hostname') != settings['hostname']):
+            return error('人机验证未通过或已过期，请重新验证后重试。', 403)
+        return None
 
     def ipv4_target():
         raw = fields().get('ipv4', '')
@@ -242,6 +273,9 @@ def create_app(settings, state_path, authorize_callback=None):
             return blocked
         reservation = None
         try:
+            rejected = check_turnstile('login_' + method)
+            if rejected is not None:
+                return rejected
             if method == 'password':
                 password = data.get('password', '')
                 valid = isinstance(password, str) and 1 <= len(password) <= 128 and hmac.compare_digest(
@@ -321,6 +355,9 @@ def create_app(settings, state_path, authorize_callback=None):
         if blocked is not None:
             return blocked
         try:
+            rejected = check_turnstile('login_passkey')
+            if rejected is not None:
+                return rejected
             target = ipv4_target()
             if not target:
                 return error('请填入远程桌面使用的公网 IPv4。', 400)
