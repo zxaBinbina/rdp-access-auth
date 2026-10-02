@@ -39,6 +39,19 @@ class PortalTests(unittest.TestCase):
         new=self.temp.current();self.assertNotEqual(new,self.initial);self.assertIn(new,r.text);self.assertEqual(len(new.split('-')),3)
         self.assertEqual(self.send('temporary',temporary=self.initial).status_code,401)
         self.assertEqual(self.send('temporary',temporary=new.replace('-',' ')).status_code,200)
+    def test_three_temporary_words_rotate(self):
+        words = self.initial.split('-')
+        response = self.send('temporary', **{f'temporary_{i+1}': word for i, word in enumerate(words)})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(self.grants), 1)
+        self.assertNotEqual(self.temp.current(), self.initial)
+
+    def test_incomplete_temporary_words_do_not_authorize(self):
+        response = self.send('temporary', temporary_1=self.initial.split('-')[0], temporary=self.initial)
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(self.grants, [])
+        self.assertEqual(self.temp.current(), self.initial)
+
     def test_restart_retains_rotation_and_encryption(self):
         self.assertNotIn(self.initial.encode(),Path(self.state).read_bytes());self.send('temporary',temporary=self.initial)
         app=create_app(self.settings,self.state,self.grants.append)

@@ -107,7 +107,7 @@ def create_app(settings, state_path, authorize_callback=None):
     def headers(response):
         response.headers['Cache-Control'] = 'no-store, max-age=0'
         response.headers['Content-Security-Policy'] = (
-            "default-src 'none'; style-src 'nonce-" + g.get('nonce', '') + "'; "
+            "default-src 'none'; img-src data:; style-src 'nonce-" + g.get('nonce', '') + "'; "
             "script-src 'nonce-" + g.get('nonce', '') + "' https://challenges.cloudflare.com; connect-src 'self' https://api.ipify.org https://ipv4.icanhazip.com https://challenges.cloudflare.com; "
             "frame-src https://challenges.cloudflare.com; "
             "form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
@@ -284,7 +284,14 @@ def create_app(settings, state_path, authorize_callback=None):
                     return bad_credentials(attempt)
             else:
                 try:
-                    reservation = temporary.reserve(data.get('temporary', ''))
+                    if any(f'temporary_{i}' in data for i in range(1, 4)):
+                        parts = [data.get(f'temporary_{i}') for i in range(1, 4)]
+                        value = '-'.join(part.strip() for part in parts) if all(
+                            isinstance(part, str) and part.strip() and len(part) <= 80 for part in parts
+                        ) else ''
+                    else:
+                        value = data.get('temporary', '')
+                    reservation = temporary.reserve(value)
                 except RuntimeError:
                     return error('这条临时密码正在被使用，请等待该次认证完成。', 409)
                 if not reservation:

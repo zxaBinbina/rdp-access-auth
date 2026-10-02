@@ -88,7 +88,8 @@ class TurnstileTests(unittest.TestCase):
         self.enable()
         for method in ('password','temporary','passkey'):
             r=self.client.get('/?method='+method,base_url=self.base,headers=self.headers)
-            self.assertIn('login_'+method,r.text)
+            self.assertIn('name="method" value="'+method+'"',r.text)
+            self.assertIn("action: 'login_' + document.getElementById('auth-form').elements.method.value",r.text)
             self.assertIn('frame-src https://challenges.cloudflare.com',r.headers['Content-Security-Policy'])
             self.assertIn('test-sitekey',r.text);self.assertNotIn('test-server-secret',r.text)
 
