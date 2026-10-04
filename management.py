@@ -275,7 +275,7 @@ def service_operation(target, action='status'):
         command = ['journalctl', *scope, '--unit', target.service, '--lines', '100', '--no-pager', '--output', 'short-iso']
     elif action == 'status':
         command = ['systemctl', *scope, '--no-ask-password', 'show', target.service,
-                   '--property=LoadState,ActiveState,SubState', '--no-pager']
+                   '--property=LoadState,ActiveState,SubState,WorkingDirectory', '--no-pager']
     else:
         command = ['systemctl', *scope, '--no-ask-password', action, target.service]
     try:
@@ -291,12 +291,16 @@ def service_operation(target, action='status'):
     return dict(message='已执行服务操作：' + action, output=result.stdout if action == 'logs' else '')
 
 
-def snapshot(target):
+def snapshot(target, *, include_credentials=False):
     result = dict(target=target.describe())
     try:
         value, revision = read_config(target.config, missing_ok=True)
         result.update(config=public_config(value), revision=revision, exists=revision != 'missing',
                       wordlist=check_wordlist(target, value))
+        if include_credentials:
+            # Only the authenticated local editor opts in; status and CLI stay redacted.
+            for key in ('sakura_token', 'turnstile_secret_key'):
+                result['config'][key] = value.get(key, '') if isinstance(value.get(key, ''), str) else ''
         if value:
             try:
                 validate_config(value)

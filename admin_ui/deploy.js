@@ -8,6 +8,7 @@ try {
 history.replaceState(null, '', location.pathname);
 let working = false;
 let timer;
+let sakuraReady = false;
 function notice(message, error = false) {
   $('notice').hidden = !message;
   $('notice').textContent = message;
@@ -52,6 +53,20 @@ async function poll() {
   catch (error) { notice(error.message, true); if (working) timer = setTimeout(poll, 3000); }
 }
 $('listen-port').addEventListener('input', () => { $('route').textContent = 'http://127.0.0.1:' + $('listen-port').value; });
+$("inspect-sakura").addEventListener('click', async () => {
+  const path = $('sakura-config').value.trim();
+  if (!path) return notice('请填写 SakuraFrp TOML 文件路径。', true);
+  $('inspect-sakura').disabled = true;
+  try {
+    const result = await api('/api/deploy/sakura/inspect', {path});
+    const selected = result.proxies.find((item) => item.name === result.suggested) || result.proxies[0];
+    $('rdp-address').value = selected.local_address;
+    $('sakura-result').hidden = false;
+    $('sakura-result').textContent = `已读取 ${result.proxies.length} 个代理，当前选择“${selected.name}”${result.credential_present ? '，Token 已找到' : ''}。`;
+    sakuraReady = result.credential_present;
+  } catch (error) { sakuraReady = false; notice(error.message, true); }
+  finally { $('inspect-sakura').disabled = false; }
+});
 $('deploy-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   if (working) return;
@@ -61,7 +76,7 @@ $('deploy-form').addEventListener('submit', async (event) => {
   if ($('words-path').value.trim()) changes.wordlist_path = $('words-path').value.trim();
   working = true; $('fields').disabled = true; notice('正在校验并准备部署文件…');
   try {
-    render(await api('/api/deploy/prepare', {changes, tunnel_token:$('cloudflare-token').value.trim(), port:Number($('listen-port').value)}));
+    render(await api('/api/deploy/prepare', {changes, tunnel_token:$('cloudflare-token').value.trim(), port:Number($('listen-port').value), sakura_config_path:$('sakura-config').value.trim()}));
     // The server owns the prepared secrets; never persist them in browser storage.
     for (const key of ['password', 'password-confirm', 'sakura-token', 'cloudflare-token', 'secret-key']) $(key).value = '';
   } catch (error) { working = false; $('fields').disabled = false; notice(error.message, true); }

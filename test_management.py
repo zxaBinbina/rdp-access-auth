@@ -183,8 +183,11 @@ class ManagementTests(ManagementFixture):
     def test_systemd_allowlist_and_failure_reporting(self):
         target = Target(self.target.config, self.target.state, 'rdp-test.service', self.root, 'system')
         with patch('management.subprocess.run') as run:
-            run.return_value = subprocess.CompletedProcess([], 0, 'LoadState=loaded\nActiveState=active\n')
-            self.assertEqual(service_operation(target)['ActiveState'], 'active')
+            run.return_value = subprocess.CompletedProcess([], 0, 'LoadState=loaded\nActiveState=active\nWorkingDirectory=/usr/lib/rdp-access-auth\n')
+            status = service_operation(target)
+            self.assertEqual(status['ActiveState'], 'active')
+            self.assertEqual(status['WorkingDirectory'], '/usr/lib/rdp-access-auth')
+            self.assertIn('--property=LoadState,ActiveState,SubState,WorkingDirectory', run.call_args.args[0])
             service_operation(target, 'restart')
             self.assertEqual(run.call_args.args[0], ['systemctl', '--no-ask-password', 'restart', 'rdp-test.service'])
             with self.assertRaises(ManagementError):
@@ -275,6 +278,28 @@ class ManagementHTTPTests(ManagementFixture):
         self.assertEqual(self.request('POST', '/api/service', {'action': 'restart'})[0], 400)
         self.assertEqual(self.request('POST', '/api/config', {'large': 'x' * 40000})[0], 413)
         self.assertFalse(self.target.config.exists())
+
+    def test_editor_reads_existing_tokens_without_password_or_session_secrets(self):
+        self.create()
+        save_config(self.target, dict(turnstile_site_key='site', turnstile_secret_key='saved-secret'))
+        _, revision = read_config(self.target.config)
+        status, body, headers = self.request(path='/api/config')
+        self.assertEqual(status, 200)
+        result = json.loads(body)
+        self.assertEqual(result['revision'], revision)
+        self.assertEqual(result['config']['sakura_token'], self.fields['sakura_token'])
+        self.assertEqual(result['config']['turnstile_secret_key'], 'saved-secret')
+        self.assertTrue(result['config']['has_password'])
+        self.assertEqual(headers['Cache-Control'], 'no-store')
+        for key in ('password', 'password_hash', 'password_salt', 'session_key'):
+            self.assertNotIn(key, result['config'])
+        self.assertNotIn(self.fields['password'], body)
+        self.assertEqual(self.request(path='/api/config', authenticated=False)[0], 401)
+        for headers in ({'Origin': 'https://evil.example'}, {'Sec-Fetch-Site': 'cross-site'}):
+            self.assertEqual(self.request(path='/api/config', headers=headers)[0], 403)
+        _, body, _ = self.request()
+        self.assertNotIn(self.fields['sakura_token'], body)
+        self.assertNotIn('saved-secret', body)
 
     def test_web_unlock_real_database(self):
         self.make_state()

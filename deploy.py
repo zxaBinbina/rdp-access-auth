@@ -18,6 +18,7 @@ import urllib.request
 from management import (ROOT, ManagementError, Target, atomic_private_write, check_wordlist,
                         read_config, save_config)
 from tools.build_wordlist import build_wordlist
+from sakura_config import config_changes
 
 UNITS = ('rdp-access-auth.service', 'cloudflared-rdp-access.service')
 
@@ -221,7 +222,7 @@ class Deployment:
                 self.phase = 'failed'
                 self.error = str(exc) if isinstance(exc, ManagementError) else '准备或部署失败，请检查网络、系统权限及磁盘空间。'
 
-    def prepare(self, changes, tunnel_token, port=18089):
+    def prepare(self, changes, tunnel_token, port=18089, sakura_config_path=None, sakura_proxy=None):
         with self.lock:
             if self.phase not in ('idle', 'failed'):
                 raise ManagementError('已有部署任务，请等待完成或重新打开向导。', 409)
@@ -231,6 +232,10 @@ class Deployment:
                     not re.fullmatch(r'[A-Za-z0-9_+/=-]+', tunnel_token)):
                 raise ManagementError('Cloudflare Tunnel Token 格式不正确，请只粘贴 Token，不包含命令。')
             preflight(self.layout, port, self.check_host)
+            if sakura_config_path:
+                imported = config_changes(sakura_config_path, sakura_proxy)
+                changes = dict(changes or {})
+                changes.update({key: value for key, value in imported.items() if key in ('sakura_token', 'rdp_address')})
             target = Target(self.stage / 'settings.json', self.stage / 'state.sqlite3', UNITS[0], self.stage)
             # Retrying preparation preserves the freshly generated session key in this workspace.
             exists = target.config.exists()
@@ -343,7 +348,7 @@ def elevate_if_needed(arguments):
         raise ManagementError('系统未安装 sudo。请使用管理员账户运行 rdp-auth deploy。')
     if not Path('/usr/bin/rdp-auth').is_file():
         raise ManagementError('请先安装 RPM/DEB，再运行部署向导。')
-    print('部署需要管理员权限，将由 sudo 请求系统密码。', flush=True)
+    print('管理系统部署需要管理员权限，将由 sudo 请求系统密码。', flush=True)
     os.execvp('sudo', ['sudo', '--', '/usr/bin/rdp-auth', *arguments])
 
 
@@ -374,13 +379,14 @@ def run_wizard(gui=False, port=18124, no_open=False):
         changes['password'] = new_password()
         changes['sakura_token'] = secret('SakuraFrp API Token：').strip()
         token = secret('Cloudflare Tunnel Token（只粘贴 Token）：').strip()
+        sakura_path = input('SakuraFrp TOML 配置绝对路径：').strip()
         site = input('Turnstile Site key（可留空）：').strip()
         if site:
             changes.update(turnstile_site_key=site, turnstile_secret_key=secret('Turnstile Secret key：').strip())
         words = input('已有中文词库绝对路径（留空自动下载）：').strip()
         if words:
             changes['wordlist_path'] = words
-        deployment.prepare(changes, token, listen_port)
+        deployment.prepare(changes, token, listen_port, sakura_config_path=sakura_path)
         seen = 0
         while deployment.worker.is_alive():
             events = deployment.status()['events']

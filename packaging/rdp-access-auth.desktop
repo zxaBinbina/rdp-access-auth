@@ -1,16 +1,12 @@
 [Desktop Entry]
 Type=Application
 Name=RDP Access Auth
-Name[zh_CN]=RDP Access Auth 部署向导
+Name[zh_CN]=RDP Access Auth
 Comment=Configure and deploy the RDP authentication portal
-Comment[zh_CN]=在浏览器中配置并部署远程桌面认证入口
-Exec=rdp-auth deploy --gui
+Comment[zh_CN]=自动检测、管理和迁移远程桌面认证服务
+Exec=rdp-auth launch %u
+MimeType=x-scheme-handler/rdp-auth;
 Icon=rdp-access-auth
 Terminal=true
-Categories=Network;Settings;
-Actions=Manage;
-
-[Desktop Action Manage]
-Name=Manage installed service
-Name[zh_CN]=管理已部署服务
-Exec=sudo /usr/bin/rdp-auth --profile system gui
+Categories=Network;RemoteAccess;
+Keywords=RDP;Authentication;SakuraFrp;Cloudflare;

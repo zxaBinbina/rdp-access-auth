@@ -136,6 +136,11 @@ a {
   gap:20px;
   align-items:center
 }
+img.brand-icon {
+  object-fit:contain;
+  border:0;
+  background:none
+}
 .local-badge {
   color:var(--muted);
   font-size:12px

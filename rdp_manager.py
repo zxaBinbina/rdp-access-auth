@@ -51,6 +51,13 @@ def parser():
     p.add_argument('--service', help='指定 systemd 服务名（以 .service 结尾）')
     p.add_argument('--scope', choices=['system', 'user'], default='system', help='systemd 服务范围')
     sub = p.add_subparsers(dest='command')
+    launch = sub.add_parser('launch', help='自动检查本机部署，打开管理页或首次部署向导')
+    launch.add_argument('url', nargs='?', help='教程链接，例如 rdp-auth://migrate?profile=legacy')
+    launch.add_argument('--port', type=port_number, default=18124, help='浏览器管理端口')
+    launch.add_argument('--no-open', action='store_true', help='只显示完整链接')
+    migrate = sub.add_parser('migrate', help='将已有服务迁移为使用 RPM/DEB 中的程序')
+    migrate.add_argument('--dry-run', action='store_true', help='仅检查并展示迁移计划')
+    migrate.add_argument('--recover', action='store_true', help='恢复被中断的迁移')
     deploy = sub.add_parser('deploy', help='首次部署向导：浏览器表单或终端交互（需要安装 RPM/DEB）')
     deploy.add_argument('--gui', action='store_true', help='在浏览器中运行部署向导')
     deploy.add_argument('--dry-run', action='store_true', help='只展示部署位置和冲突，不修改系统、不询问凭据')
@@ -157,7 +164,72 @@ def main(argv=None):
         return 0
     try:
         target = select_target(args.profile, args.config, args.state, args.service, args.scope)
-        if args.command == 'deploy':
+        if args.command == 'launch':
+            from installation import installed_targets, preferred_target
+            from deploy import elevate_if_needed, run_wizard
+            from management_web import run_gui
+            from app_links import parse_app_link
+            link = parse_app_link(args.url) if args.url else dict(view='open', profile='auto')
+            if link['profile'] != 'auto':
+                if args.profile != 'local' and args.profile != link['profile']:
+                    raise ManagementError('命令参数和链接指定的管理目标不一致。')
+                args.profile = link['profile']
+            if args.config or args.state or args.service or args.scope != 'system':
+                raise ManagementError('自动入口不接受自定义路径；请使用 gui 管理自定义部署。')
+            elevate_if_needed(['--profile', args.profile, 'launch', '--port', str(args.port)] +
+                              (['--no-open'] if args.no_open else []) + ([args.url] if args.url else []))
+            targets = installed_targets()
+            if targets and args.profile != 'local':
+                target = next((item for item in targets if item.profile == args.profile), None)
+                if target is None:
+                    raise ManagementError('未检测到链接或命令指定的部署档案。请使用 rdp-auth launch 自动选择。')
+            else:
+                target = preferred_target(targets, service_operation)
+            if target:
+                run_gui(target, args.port, not args.no_open, view=link['view'], fallback_port=True)
+            else:
+                run_wizard(True, args.port, args.no_open)
+        elif args.command == 'migrate':
+            from installation import installed_targets, preferred_target
+            from migration import Migration
+            from deploy import elevate_if_needed
+            if not args.dry_run:
+                elevate_if_needed(['--profile', args.profile, 'migrate'] + (['--recover'] if args.recover else []))
+            if args.config or args.state or args.service or args.scope != 'system':
+                raise ManagementError('迁移不接受自定义路径或服务名。')
+            if args.profile == 'local':
+                target = preferred_target(installed_targets(), service_operation)
+            if not target:
+                raise ManagementError('未检测到已有部署，请先运行 rdp-auth launch。')
+            migration = Migration(target)
+            try:
+                if args.recover:
+                    if args.dry_run:
+                        output(migration.status())
+                        return 0
+                    migration.start(recover=True)
+                else:
+                    plan = migration.plan()
+                    output(plan)
+                    if args.dry_run or not plan.get('available'):
+                        return 0
+                    if not sys.stdin.isatty():
+                        raise ManagementError('请在交互终端确认迁移，或使用管理页。')
+                    if input('备份后切换程序并短暂重启认证服务？[y/N]：').lower() not in ('y', 'yes'):
+                        return 0
+                    migration.start(plan['revision'])
+                seen = 0
+                while migration.worker.is_alive():
+                    migration.worker.join(timeout=0.5)
+                    events = migration.status()['events']
+                    for event in events[seen:]:
+                        print(event, flush=True)
+                    seen = len(events)
+                if migration.error:
+                    raise ManagementError(migration.error)
+            finally:
+                migration.close()
+        elif args.command == 'deploy':
             from deploy import deployment_plan, run_wizard
             if args.dry_run:
                 output(deployment_plan())
@@ -245,7 +317,7 @@ def main(argv=None):
                 if importlib.util.find_spec('playwright') is None:
                     raise ManagementError('浏览器测试依赖未安装，请先执行 ./rdp-auth setup --browser。')
                 require_runtime('flask')
-                for script in ('check_management_ui.py', 'check_deploy_ui.py', 'check_tabs.py'):
+                for script in ('check_management_ui.py', 'check_deploy_ui.py', 'check_migration_ui.py', 'check_tabs.py'):
                     result = subprocess.call([sys.executable, str(ROOT / 'tools' / script)], cwd=ROOT, env=env)
                     if result:
                         return result

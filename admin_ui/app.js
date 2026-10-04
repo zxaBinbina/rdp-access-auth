@@ -1,5 +1,6 @@
 'use strict';
 const $ = (id) => document.getElementById(id);
+const requestedView = new URLSearchParams(location.search).get('view');
 let token = new URLSearchParams(location.hash.slice(1)).get('token');
 try {
   if (token) sessionStorage.setItem('rdp-management-token', token);
@@ -8,16 +9,67 @@ try {
 history.replaceState(null, '', location.pathname);
 let current = null;
 let formRevision = null;
+let initialFormValues = null;
+let formCredentials = {};
 let dirty = false;
 let busy = false;
 let refreshing = false;
-try { const theme = localStorage.getItem('rdp-management-theme'); if (['dark', 'light'].includes(theme)) document.documentElement.dataset.theme = theme; } catch (_) {}
-$('theme').addEventListener('click', () => {
-  const dark = document.documentElement.dataset.theme ? document.documentElement.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
-  const theme = dark ? 'light' : 'dark';
-  document.documentElement.dataset.theme = theme;
-  try { localStorage.setItem('rdp-management-theme', theme); } catch (_) {}
+let migrationBusy = false;
+let migrationPlan = null;
+let migrationTimer;
+function setMenu(open, restoreFocus = false) {
+  $('mobile-nav').hidden = !open;
+  $('mobile-nav').inert = !open;
+  $('menu-toggle').setAttribute('aria-expanded', String(open));
+  $('menu-toggle').setAttribute('aria-label', open ? '关闭菜单' : '打开菜单');
+  if (restoreFocus) $('menu-toggle').focus();
+}
+$('menu-toggle').addEventListener('click', () => setMenu($('mobile-nav').hidden));
+$('mobile-nav').addEventListener('click', (event) => {
+  if (event.target.closest('a')) setMenu(false);
 });
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !$('mobile-nav').hidden) setMenu(false, true);
+});
+document.addEventListener('click', (event) => {
+  if (!$('site-header').contains(event.target)) setMenu(false);
+});
+matchMedia('(min-width: 761px)').addEventListener('change', (event) => {
+  if (event.matches) setMenu(false);
+});
+const sections = ['overview', 'configuration', 'maintenance'].map($);
+const sectionLinks = document.querySelectorAll('[data-section-link]');
+sections.forEach((section) => section.setAttribute('tabindex', '-1'));
+let scrollFrame;
+function updateNavigation() {
+  const atBottom = Math.ceil(scrollY + innerHeight) >= document.documentElement.scrollHeight - 2;
+  const section = atBottom ? sections.at(-1) : sections.filter((item) => item.getBoundingClientRect().top <= 160).at(-1) || sections[0];
+  sectionLinks.forEach((link) => {
+    if (link.dataset.sectionLink === section.id) link.setAttribute('aria-current', 'location');
+    else link.removeAttribute('aria-current');
+  });
+  scrollFrame = null;
+}
+window.addEventListener('scroll', () => {
+  if (!scrollFrame) scrollFrame = requestAnimationFrame(updateNavigation);
+}, {passive: true});
+updateNavigation();
+if ('IntersectionObserver' in window) {
+  const observer = new IntersectionObserver((entries) => entries.forEach((entry) => {
+    if (entry.isIntersecting) {
+      entry.target.classList.add('section-arrival');
+      observer.unobserve(entry.target);
+    }
+  }), {threshold: 0.05});
+  document.querySelectorAll('.content-section').forEach((section) => observer.observe(section));
+}
+function renderReveal(button, show) {
+  button.querySelector('use').setAttribute('href', `/icons.svg#${show ? 'eye-off' : 'eye'}`);
+  button.setAttribute('aria-pressed', String(show));
+  const fieldLabel = document.querySelector(`label[for="${button.dataset.reveal}"]`).childNodes[0].textContent.trim();
+  button.setAttribute('aria-label', `${show ? '隐藏' : '显示'}${fieldLabel}`);
+  button.title = button.getAttribute('aria-label');
+}
 
 function notice(message, error = false) {
   $('notice').textContent = message;
@@ -46,17 +98,60 @@ function turnstileFields() {
   $('turnstile-fields').hidden = !enabled;
   $('turnstile-off').hidden = enabled;
   $('turnstile_site_key').required = enabled;
-  $('turnstile_secret_key').required = enabled && !current?.config?.has_turnstile_secret;
+  $('turnstile_secret_key').required = enabled;
   $('turnstile_site_key').disabled = !enabled;
   $('turnstile_secret_key').disabled = !enabled;
 }
+function formValues() {
+  return JSON.stringify(['hostname', 'rdp_address', 'tunnel_id', 'wordlist_path', 'sakura_token',
+    'password', 'password-confirm', 'turnstile_site_key', 'turnstile_secret_key'].map((key) => $(key).value)
+    .concat($('turnstile-enabled').checked));
+}
+function updateDirty() {
+  dirty = initialFormValues !== null && formValues() !== initialFormValues;
+  $('save-hint').textContent = dirty ? '有尚未保存的修改' : '保存时保留会话密钥和现有凭据';
+}
+function setPasswordEditing(editing) {
+  $('password-saved').hidden = editing;
+  $('password-editor').hidden = !editing;
+  $('password-cancel').hidden = !editing || !current?.config?.has_password;
+  for (const key of ['password', 'password-confirm']) {
+    $(key).disabled = !editing;
+    $(key).required = editing;
+  }
+}
+$('password-change').addEventListener('click', () => {
+  setPasswordEditing(true);
+  $('password').focus();
+});
+$('password-cancel').addEventListener('click', () => {
+  for (const key of ['password', 'password-confirm']) { $(key).value = ''; $(key).type = 'password'; }
+  renderReveal(document.querySelector('[data-reveal=password]'), false);
+  setPasswordEditing(false);
+  updateDirty();
+  $('password-change').focus();
+});
 function controls() {
-  $('config-fields').disabled = busy || refreshing || !current || !!current.config_error;
+  $('config-fields').disabled = busy || migrationBusy || refreshing || !current || !!current.config_error;
   $('refresh').disabled = busy || refreshing;
+  $('refresh').classList.toggle('is-refreshing', refreshing);
+  $('refresh').setAttribute('aria-busy', String(refreshing));
+  $('loading-status').hidden = !refreshing;
+  $('runtime-stats').setAttribute('aria-busy', String(refreshing));
   const serviceAvailable = current?.target.profile !== 'local' && current?.service?.LoadState === 'loaded';
-  document.querySelectorAll('[data-service]').forEach((button) => { button.disabled = busy || !serviceAvailable; });
+  document.querySelectorAll('[data-service]').forEach((button) => { button.disabled = busy || migrationBusy || !serviceAvailable; });
   $('show-logs').disabled = busy || !serviceAvailable;
-  $('unlock').disabled = busy || !current?.state;
+  $('unlock').disabled = busy || migrationBusy || !current?.state;
+}
+function renderDeployment() {
+  if (!current) return;
+  const local = current.target.profile === 'local';
+  const workdir = current.service?.WorkingDirectory;
+  const packaged = current.service?.LoadState === 'loaded' && workdir === '/usr/lib/rdp-access-auth';
+  // A migrated service keeps its original profile, paths and name.
+  const legacy = !packaged && current.service?.LoadState === 'loaded' && workdir === current.target.runtime;
+  $('profile-label').textContent = local ? '项目配置' : packaged ? '软件包部署' : legacy ? '旧版部署' : '系统部署';
+  $('migration-card').hidden = local || !(legacy || migrationBusy);
 }
 function render(value, populate) {
   current = value;
@@ -64,7 +159,8 @@ function render(value, populate) {
   $('state-path').textContent = value.target.state;
   $('service-name').textContent = value.target.service + (value.target.scope === 'user' ? '（用户服务）' : '');
   const local = value.target.profile === 'local';
-  $('profile-label').textContent = local ? '项目配置' : value.target.profile === 'legacy' ? '旧版部署' : '系统部署';
+  $('local-instructions').hidden = !local;
+  renderDeployment();
   $('target-description').textContent = local ? '当前只管理项目内的配置。此模式不控制已部署的系统服务。' : '当前管理显式选定的系统部署，请核对以下路径。';
   $('config-state').textContent = value.config_error ? '无法读取' : value.validation_error ? '待修复' : value.exists ? '已配置' : '待配置';
   $('config-detail').textContent = value.exists ? '可在下方修改并保存' : '填写连接信息和访问凭据';
@@ -88,16 +184,22 @@ function render(value, populate) {
   if (populate && value.config) {
     formRevision = value.revision;
     for (const key of ['hostname', 'rdp_address', 'tunnel_id', 'wordlist_path', 'turnstile_site_key']) $(key).value = value.config[key] ?? '';
-    for (const key of ['password', 'sakura_token', 'turnstile_secret_key', 'password-confirm']) { $(key).value = ''; $(key).type = 'password'; }
-    document.querySelectorAll('[data-reveal]').forEach((button) => { button.textContent = '显示'; button.setAttribute('aria-pressed', 'false'); });
-    $('password').required = !value.config.has_password;
-    $('password-confirm').required = !value.config.has_password;
-    $('sakura_token').required = !value.config.has_sakura_token;
+    for (const key of ['password', 'password-confirm']) { $(key).value = ''; $(key).type = 'password'; }
+    formCredentials = {};
+    for (const key of ['sakura_token', 'turnstile_secret_key']) {
+      formCredentials[key] = value.config[key] || '';
+      $(key).value = formCredentials[key];
+      $(key).type = 'password';
+    }
+    document.querySelectorAll('[data-reveal]').forEach((button) => renderReveal(button, false));
+    setPasswordEditing(!value.config.has_password);
+    $('sakura_token').required = true;
     $('password-state').textContent = value.config.has_password ? '已配置' : '首次设置';
     $('token-state').textContent = value.config.has_sakura_token ? '已配置' : '首次设置';
     $('turnstile-secret-state').textContent = value.config.has_turnstile_secret ? '已配置' : '';
     $('turnstile-enabled').checked = !!value.config.turnstile_site_key;
     turnstileFields();
+    initialFormValues = formValues();
     dirty = false;
     $('save-hint').textContent = '保存时保留会话密钥和现有凭据';
   }
@@ -107,7 +209,7 @@ async function refresh(populate = false) {
   refreshing = true;
   controls();
   try {
-    const value = await api('/api/status');
+    const value = await api(populate ? '/api/config' : '/api/status');
     render(value, populate);
     if (value.config_error || value.validation_error) notice(value.config_error || value.validation_error, true);
   } finally { refreshing = false; controls(); }
@@ -125,11 +227,11 @@ function confirmAction(title, message) {
     $('confirm-cancel').focus();
   });
 }
-$('config-form').addEventListener('input', () => { dirty = true; $('save-hint').textContent = '有尚未保存的修改'; });
+$('config-form').addEventListener('input', updateDirty);
 $('turnstile-enabled').addEventListener('change', turnstileFields);
 document.querySelectorAll('[data-reveal]').forEach((button) => button.addEventListener('click', () => {
   const field = $(button.dataset.reveal); const show = field.type === 'password';
-  field.type = show ? 'text' : 'password'; button.textContent = show ? '隐藏' : '显示'; button.setAttribute('aria-pressed', String(show));
+  field.type = show ? 'text' : 'password'; renderReveal(button, show);
 }));
 $('config-form').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -138,18 +240,20 @@ $('config-form').addEventListener('submit', async (event) => {
   const changes = {};
   for (const key of ['hostname', 'rdp_address', 'wordlist_path']) changes[key] = $(key).value.trim();
   changes.tunnel_id = Number($('tunnel_id').value);
-  for (const key of ['password', 'sakura_token']) if ($(key).value) changes[key] = $(key).value;
+  if (!$('password').disabled && $('password').value) changes.password = $('password').value;
+  if ($('sakura_token').value !== formCredentials.sakura_token) changes.sakura_token = $('sakura_token').value;
   changes.disable_turnstile = !$('turnstile-enabled').checked;
   if (!changes.disable_turnstile) {
     changes.turnstile_site_key = $('turnstile_site_key').value.trim();
-    if ($('turnstile_secret_key').value) changes.turnstile_secret_key = $('turnstile_secret_key').value;
+    if ($('turnstile_secret_key').value !== formCredentials.turnstile_secret_key) changes.turnstile_secret_key = $('turnstile_secret_key').value;
   }
+  const savedCredentials = {sakura_token: $('sakura_token').value,
+    turnstile_secret_key: changes.disable_turnstile ? '' : $('turnstile_secret_key').value};
   busy = true; controls();
   try {
     const result = await api('/api/config', {revision: formRevision, changes});
-    // Clear secrets immediately after a confirmed save, even if the next status request fails.
-    for (const key of ['password', 'password-confirm', 'sakura_token', 'turnstile_secret_key']) $(key).value = '';
-    dirty = false;
+    // Restore the saved view and hide the new password even if the follow-up read fails.
+    render({...current, config: {...result.config, ...savedCredentials}, revision: result.revision, exists: true}, true);
     await refresh(true);
     notice(result.message + (result.hostname_changed ? ' 认证域名已改变，请同步 Tunnel 配置并重新绑定通行密钥。' : ''));
   } catch (error) { notice(error.message, true); }
@@ -158,7 +262,7 @@ $('config-form').addEventListener('submit', async (event) => {
 $('refresh').addEventListener('click', async () => {
   if (dirty && !await confirmAction('重新载入配置', '当前有尚未保存的修改，重新载入将丢弃这些修改。')) return;
   notice('');
-  try { await refresh(true); } catch (error) { notice(error.message, true); }
+  try { await refresh(true); await loadMigration(); } catch (error) { notice(error.message, true); }
 });
 async function runAction(path, data, title, message) {
   if (busy || !await confirmAction(title, message)) return;
@@ -179,4 +283,70 @@ $('show-logs').addEventListener('click', async () => {
   finally { busy = false; controls(); }
 });
 window.addEventListener('beforeunload', (event) => { if (dirty) { event.preventDefault(); event.returnValue = ''; } });
-refresh(true).catch((error) => { $('config-state').textContent = '未连接'; $('config-detail').textContent = '请检查终端中的管理服务'; notice(error.message, true); });
+function renderMigration(value) {
+  migrationBusy = value.phase === 'running' || !!value.recovery_required;
+  migrationPlan = value.plan || {};
+  renderDeployment();
+  $('migration-description').textContent = value.message || migrationPlan.message || (value.phase === 'running' ? '正在备份并切换程序，请保持终端运行。' : '');
+  $('migration-plan').hidden = !migrationPlan.available;
+  $('migration-source').textContent = migrationPlan.current_program || '';
+  $('migration-service').textContent = migrationPlan.service ? `${migrationPlan.service} · ${migrationPlan.port}` : '';
+  $('migration-backup').textContent = value.backup || migrationPlan.backup_directory || '';
+  $('migration-apply').hidden = !migrationPlan.available || migrationBusy;
+  $('migration-check').disabled = busy || migrationBusy;
+  $('migration-recover').hidden = !value.recovery_required;
+  $('migration-recover').disabled = value.phase === 'running';
+  $('migration-events').replaceChildren(...(value.events || []).map((message) => { const li = document.createElement('li'); li.textContent = message; return li; }));
+  $('migration-error').hidden = !value.error;
+  $('migration-error').textContent = value.error || '';
+  controls();
+  clearTimeout(migrationTimer);
+  if (value.phase === 'running') migrationTimer = setTimeout(loadMigration, 1200);
+}
+async function loadMigration() {
+  try {
+    const wasBusy = migrationBusy;
+    renderMigration(await api('/api/migration'));
+    if (wasBusy && !migrationBusy) await refresh(false);
+  } catch (error) {
+    notice(error.message, true);
+    if (migrationBusy) migrationTimer = setTimeout(loadMigration, 3000);
+  }
+}
+$('migration-check').addEventListener('click', loadMigration);
+async function migrate(recover = false) {
+  if (busy) return;
+  if (dirty) return notice('请先保存或重新载入当前配置，再迁移。', true);
+  const accepted = await confirmAction(recover ? '恢复原服务' : '迁移现有部署', recover
+    ? '恢复迁移前的程序和数据库。原先运行的服务会重新启动。'
+    : '将备份当前凭据和数据库，切换到已安装的软件包程序并进行健康检查。认证页面会短暂中断；检查失败时恢复原服务。');
+  if (!accepted) return;
+  busy = true; controls();
+  try {
+    renderMigration(await api(recover ? '/api/migration/recover' : '/api/migration/apply', {revision:migrationPlan?.revision}));
+    if (!migrationBusy) await refresh(false);
+  }
+  catch (error) { notice(error.message, true); await loadMigration(); }
+  finally { busy = false; controls(); }
+}
+$('migration-apply').addEventListener('click', () => migrate());
+$('migration-recover').addEventListener('click', () => migrate(true));
+refresh(true).then(loadMigration).then(() => {
+  if (requestedView === 'migrate') {
+    if (!$('migration-card').hidden) {
+      $('migration-card').scrollIntoView({block:'start'});
+      const action = !$('migration-recover').hidden ? $('migration-recover') : $('migration-check');
+      if (!action.disabled) action.focus({preventScroll:true});
+    } else if (current?.service?.WorkingDirectory === '/usr/lib/rdp-access-auth') {
+      notice('当前已使用软件包部署，无需迁移。');
+    } else {
+      notice('当前未检测到需要迁移的旧版部署。');
+    }
+  } else if (requestedView === 'logs') {
+    $('show-logs').scrollIntoView({block:'center'});
+    $('show-logs').focus({preventScroll:true});
+    if (!$('show-logs').disabled) $('show-logs').click();
+  } else if (requestedView === 'deploy') {
+    notice('已检测到现有部署，已为你打开管理页面。');
+  }
+}).catch((error) => { $('config-state').textContent = '未连接'; $('config-detail').textContent = '请检查终端中的管理服务'; notice(error.message, true); });

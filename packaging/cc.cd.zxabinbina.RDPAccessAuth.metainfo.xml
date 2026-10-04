@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>cc.cd.zxabinbina.RDPAccessAuth</id>
+  <name>RDP Access Auth</name>
+  <summary>Manage authentication for your remote desktop</summary>
+  <summary xml:lang="zh-CN">部署、管理和迁移远程桌面认证服务</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="cc.cd.zxabinbina"><name>a彬彬a</name></developer>
+  <description><p>RDP Access Auth adds an HTTPS authentication portal to SakuraFrp remote desktops. It supports passwords, temporary passwords and passkeys.</p><p>Detect existing installations, manage local services and migrate older deployments with private backups and health checks.</p></description>
+  <launchable type="desktop-id">rdp-access-auth.desktop</launchable>
+  <url type="homepage">https://github.com/zxaBinbina/rdp-access-auth</url>
+  <url type="bugtracker">https://github.com/zxaBinbina/rdp-access-auth/issues</url>
+  <provides><binary>rdp-auth</binary><mediatype>x-scheme-handler/rdp-auth</mediatype></provides>
+  <content_rating type="oars-1.1"/>
+  <releases><release version="0.3.4" date="2026-10-04"><description><p>Populate saved tokens in the local editor and show a configured-password summary with explicit replacement controls.</p></description></release><release version="0.3.3" date="2026-10-04"><description><p>Align the management interface with the personal website: floating navigation, section layouts, loading transitions and local Lucide icons.</p></description></release><release version="0.3.2" date="2026-10-04"><description><p>Detect deployment type from the service program and hide migration controls after successful migration or a fresh package deployment.</p></description></release><release version="0.3.1" date="2026-10-04"><description><p>Fix systemd credential paths during migration and retain failure diagnostics after recovery.</p></description></release><release version="0.3.0" date="2026-10-04"><description><p>Automatic startup detection, migration with recovery, and native package metadata.</p></description></release></releases>
+</component>

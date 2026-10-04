@@ -1,6 +1,12 @@
 #!/bin/sh
 set -eu
 RDP_PACKAGE_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+# Help must work even before dependencies have been installed.
+for argument in "$@"; do
+    case "$argument" in
+        -h|--help) exec python3 "$RDP_PACKAGE_ROOT/tools/build_packages.py" --help ;;
+    esac
+done
 if [ ! -x "$RDP_PACKAGE_ROOT/.build/package-venv/bin/python" ]; then
     python3 -m venv "$RDP_PACKAGE_ROOT/.build/package-venv"
 fi

@@ -2,24 +2,25 @@
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark light"><title>首次部署 · RDP Access Auth</title><link rel="stylesheet" href="/app.css"><link rel="stylesheet" href="/deploy.css"><script src="/deploy.js" defer></script></head>
 <body><div class="shell wizard-shell">
-  <header class="topbar"><a class="brand" href="/"><span class="brand-icon">R</span><span>RDP Access Auth<small>首次部署向导</small></span></a><span class="local-badge">仅本机访问</span></header>
-  <main><section class="intro"><div><p class="eyebrow">INSTALLATION</p><h1>填写信息，完成本机部署。</h1><p class="muted">准备文件 → 核对计划 → 安装并启动</p></div></section>
+  <header class="topbar"><a class="brand" href="/"><img class="brand-logo" src="/rdp-access-auth.png" alt="" width="42" height="42"><span>RDP Access Auth<small>部署助手</small></span></a><span class="local-badge"><i></i>仅本机访问</span></header>
+  <main><section class="intro"><div><p class="eyebrow">FIRST RUN / SETUP</p><h1>把认证入口部署到这台主机。</h1><p class="muted">向导会检查环境、读取 SakuraFrp 配置、准备运行文件，并在安装后逐项验证。</p></div></section>
     <p id="notice" class="notice" role="status" aria-live="polite" hidden></p>
     <div class="workspace wizard-grid"><section class="card settings-card">
-      <form id="deploy-form"><fieldset id="fields"><h2>连接与认证</h2>
+      <form id="deploy-form"><fieldset id="fields"><div class="stepper"><span class="active">01 环境</span><span>02 配置</span><span>03 安装</span><span>04 验证</span></div><h2>连接与认证</h2>
         <label for="hostname">认证域名</label><input id="hostname" placeholder="auth.example.com" required maxlength="253">
-        <div class="form-row"><div><label for="rdp-address">远程桌面地址</label><input id="rdp-address" placeholder="desktop.example.com:3389" required></div><div><label for="tunnel-id">SakuraFrp 隧道 ID</label><input id="tunnel-id" type="number" min="1" max="2147483647" required></div></div>
-        <label for="sakura-token">SakuraFrp API Token</label><input id="sakura-token" type="password" autocomplete="new-password" required maxlength="4096">
+        <div class="sakura-import"><div><label for="sakura-config">SakuraFrp 配置文件</label><input id="sakura-config" placeholder="例如 /home/user/frpc.toml" required><p class="hint">直接读取 frpc TOML，自动提取 Token 和 TCP 代理。Token 不会显示在页面。</p></div><button id="inspect-sakura" class="secondary" type="button">检查配置</button></div><p id="sakura-result" class="inline-note" hidden></p>
+        <div class="form-row"><div><label for="rdp-address">远程桌面地址</label><input id="rdp-address" placeholder="从 TOML 自动填入，也可修改" required></div><div><label for="tunnel-id">SakuraFrp 隧道 ID</label><input id="tunnel-id" type="number" min="1" max="2147483647" required><p class="hint">API 隧道 ID 不在标准 frpc TOML 中，请按 SakuraFrp 控制台填写。</p></div></div>
+        <input id="sakura-token" type="hidden">
         <div class="form-row"><div><label for="password">固定访问密码</label><input id="password" type="password" minlength="16" maxlength="128" autocomplete="new-password" required></div><div><label for="password-confirm">确认密码</label><input id="password-confirm" type="password" autocomplete="new-password" required></div></div><p class="hint">16～128 位，包含大小写字母、数字和特殊符号。</p>
         <div class="divider"></div><h2>Cloudflare Tunnel</h2>
         <label for="cloudflare-token">Tunnel Token</label><input id="cloudflare-token" type="password" autocomplete="new-password" maxlength="16384" required><p class="hint">在 Cloudflare 控制台创建 Tunnel 后，复制安装命令中的 Token 部分。无需填写 Cloudflare 账户密码或全局 API Key。</p>
         <label for="listen-port">本机认证端口</label><input id="listen-port" type="number" min="1024" max="65535" value="18089" required><p class="hint">请在该 Tunnel 添加公开域名路由：认证域名 → <code id="route">http://127.0.0.1:18089</code>。</p>
         <details class="advanced"><summary>可选：Turnstile 与已有词库</summary><label for="site-key">Turnstile Site key</label><input id="site-key" maxlength="4096"><label for="secret-key">Turnstile Secret key</label><input id="secret-key" type="password" autocomplete="new-password" maxlength="4096"><label for="words-path">已有中文词库的绝对路径</label><input id="words-path" placeholder="留空则自动下载并校验词库"><p class="hint">安装包不包含游戏词库，首次部署会从公开来源下载。也可指定通过项目工具生成的词库。</p></details>
-        <label class="acknowledgement"><input id="prerequisites" type="checkbox" required><span>已准备好远程桌面和 SakuraFrp 隧道（auth_mode = server），并已在 Cloudflare 配置上述域名路由。</span></label>
+        <label class="acknowledgement"><input id="prerequisites" type="checkbox" required><span>我已确认 TOML 中的代理指向目标 RDP，且 Cloudflare 路由会指向下面显示的本机认证端口。</span></label>
         <div class="save-bar"><span>此步骤只准备文件，不写入系统。</span><button id="prepare" class="primary" type="submit">检查并准备部署</button></div>
       </fieldset></form>
       <section id="review" hidden><h2>核对部署计划</h2><p class="hint">准备已完成。确认后会写入以下位置，并启用两个开机自启服务。</p><pre id="plan"></pre><button id="install" class="primary">确认部署到这台主机</button></section>
       <section id="complete" hidden><h2>本机部署完成</h2><p class="hint">认证服务已通过本机健康检查，两个服务已启动。请打开认证域名验证 Cloudflare 路由与实际登录。</p><p id="site-url"></p><p class="hint">后续管理：<code>sudo rdp-auth --profile system gui</code></p></section>
-    </section><aside class="side-column"><section class="card"><p class="eyebrow">PROGRESS</p><h2 id="phase">等待填写信息</h2><ol id="events" aria-live="polite"></ol><p id="task-error" class="inline-note" hidden></p></section><section class="card"><h2>向导会完成什么</h2><ul class="wizard-notes"><li>校验输入，生成并保存加密所需密钥。</li><li>准备中文词库和经过 SHA-256 校验的 Cloudflare 连接器。</li><li>写入私密配置并注册 systemd 服务。</li><li>启动认证入口、执行本机健康检查。</li></ul><p class="hint">发现已有部署时会停止，保留原配置与服务。已安装主程序或其他账户配置不由此向导迁移。</p></section></aside></div>
+    </section><aside class="side-column"><section class="card status-card"><p class="eyebrow">LIVE CHECKS</p><h2 id="phase">等待填写信息</h2><ol id="events" aria-live="polite"></ol><p id="task-error" class="inline-note" hidden></p></section><section class="card"><h2>这一步会做什么</h2><ul class="wizard-notes"><li>检查 systemd、权限、端口和安装包。</li><li>从 TOML 读取 SakuraFrp 代理与凭据。</li><li>准备词库、校验 cloudflared 并显示安装计划。</li><li>启动服务后检查本机认证和 Tunnel。</li></ul></section></aside></div>
   </main><footer><span>RDP Access Auth · 首次部署</span><span>安装中请保持终端运行</span></footer>
 </div></body></html>

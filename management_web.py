@@ -12,6 +12,7 @@ import webbrowser
 
 from management import (ROOT, ManagementError, save_config, service_operation,
                         snapshot, state_operation)
+from sakura_config import inspect_config
 
 ASSETS = {'/': ('index.html', 'text/html; charset=utf-8'),
           '/deploy.js': ('deploy.js', 'text/javascript; charset=utf-8'),
@@ -19,9 +20,17 @@ ASSETS = {'/': ('index.html', 'text/html; charset=utf-8'),
           '/app.css': ('app.css', 'text/css; charset=utf-8'),
           '/app.js': ('app.js', 'text/javascript; charset=utf-8')}
 
+ASSETS['/rdp-access-auth.png'] = ('rdp-access-auth.png', 'image/png')
+ASSETS['/icons.svg'] = ('icons.svg', 'image/svg+xml')
+ASSETS['/management.css'] = ('management.css', 'text/css; charset=utf-8')
+ASSETS['/theme.js'] = ('theme.js', 'text/javascript; charset=utf-8')
 
-def create_server(target, port=18124, deployment=None):
+
+def create_server(target, port=18124, deployment=None, migration=None):
     token = secrets.token_urlsafe(32)
+    if migration is None and deployment is None and target.profile in ('legacy', 'system'):
+        from migration import Migration
+        migration = Migration(target)
 
     class Handler(BaseHTTPRequestHandler):
         # The server deliberately logs neither URLs nor credentials.
@@ -68,8 +77,12 @@ def create_server(target, port=18124, deployment=None):
                     self.reply(200, (ROOT / 'admin_ui' / name).read_bytes(), mime)
                 elif path == '/api/deployment' and deployment:
                     self.reply(200, deployment.status())
+                elif path == '/api/migration':
+                    self.reply(200, migration.status() if migration else dict(phase='idle', plan=dict(available=False)))
                 elif path == '/api/status':
                     self.reply(200, snapshot(target))
+                elif path == '/api/config':
+                    self.reply(200, snapshot(target, include_credentials=True))
                 elif path == '/api/logs':
                     self.reply(200, service_operation(target, 'logs'))
                 else:
@@ -96,8 +109,18 @@ def create_server(target, port=18124, deployment=None):
                     raise ManagementError('请求内容无效或接收超时。') from None
                 if not isinstance(data, dict):
                     raise ManagementError('请求必须为 JSON 对象。')
+                if migration and (migration.phase == 'running' or migration.pending()) and self.path != '/api/migration/recover':
+                    raise ManagementError('迁移正在进行或等待恢复，请完成后再修改配置或服务。', 409)
                 if self.path == '/api/deploy/prepare' and deployment:
-                    result = deployment.prepare(data.get('changes'), data.get('tunnel_token'), data.get('port', 18089))
+                    result = deployment.prepare(data.get('changes'), data.get('tunnel_token'), data.get('port', 18089),
+                                                data.get('sakura_config_path'), data.get('sakura_proxy'))
+                elif self.path == '/api/deploy/sakura/inspect' and deployment:
+                    result = inspect_config(data.get('path'))
+                    result.pop('credential', None)
+                elif self.path == '/api/migration/apply' and migration:
+                    result = migration.start(data.get('revision'))
+                elif self.path == '/api/migration/recover' and migration:
+                    result = migration.start(recover=True)
                 elif self.path == '/api/deploy/apply' and deployment:
                     result = deployment.apply()
                 elif self.path == '/api/config':
@@ -124,6 +147,7 @@ def create_server(target, port=18124, deployment=None):
     server = ThreadingHTTPServer(('127.0.0.1', port), Handler)
     server.daemon_threads = True
     server.management_url = f'http://127.0.0.1:{server.server_port}/#token={token}'
+    server.migration = migration
     return server
 
 
@@ -152,11 +176,15 @@ def open_user_browser(url):
     return webbrowser.open(url)
 
 
-def run_gui(target, port=18124, open_browser=True, deployment=None):
+def run_gui(target, port=18124, open_browser=True, deployment=None, view='open', fallback_port=False):
     try:
         server = create_server(target, port, deployment)
     except OSError:
-        raise ManagementError(f'无法监听本机端口 {port}，请用 gui --port 指定其他端口。') from None
+        if not fallback_port:
+            raise ManagementError(f'无法监听本机端口 {port}，请用 gui --port 指定其他端口。') from None
+        server = create_server(target, 0, deployment)
+    if view in ('manage', 'deploy', 'migrate', 'logs'):
+        server.management_url = server.management_url.replace('/#token=', f'/?view={view}#token=')
     print('浏览器管理已启动（仅本机可访问，Ctrl+C 退出）。', flush=True)
     print('配置文件：' + str(target.config), flush=True)
     print('打开完整链接：' + server.management_url, flush=True)
@@ -172,3 +200,5 @@ def run_gui(target, port=18124, open_browser=True, deployment=None):
         print('\n浏览器管理已关闭。')
     finally:
         server.server_close()
+        if server.migration:
+            server.migration.close()

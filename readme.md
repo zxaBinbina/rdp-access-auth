@@ -18,10 +18,11 @@ sudo dnf install ./rdp-access-auth-0.2.0-1.fc44.x86_64.rpm
 sudo apt install ./rdp-access-auth_版本_py版本_架构.deb
 ```
 
-安装后，从应用菜单打开 **RDP Access Auth 部署向导**，或选择下列任一方式：
+安装后，从应用菜单打开 **RDP Access Auth**。助手先检查本机：已有标准或旧版部署时打开对应管理页，尚未部署才打开首次部署向导。也可使用：
 
 ```bash
-rdp-auth deploy --gui   # 浏览器表单向导
+rdp-auth launch         # 自动识别部署，打开管理页或首次向导
+rdp-auth deploy --gui   # 显式打开首次部署向导
 rdp-auth deploy         # 终端逐项询问，密码和 Token 隐藏输入
 rdp-auth deploy --dry-run  # 只查看部署位置和已有部署冲突
 ```
@@ -53,11 +54,84 @@ sudo rdp-auth --profile system service logs
 sudo rdp-auth --profile system --service cloudflared-rdp-access.service service logs
 ```
 
-更新软件包保留配置和状态，服务需在管理页中手动重启以加载新代码。卸载软件包时，会停止向导创建的两个服务，但保留私密配置、数据库和单独下载的连接器；手动源码部署及旧版服务不由软件包迁移。
+更新软件包保留配置和状态，已使用软件包程序的服务需在管理页中重启以加载新代码。卸载软件包时会停止向导创建的服务及已迁移的认证服务，保留私密配置、数据库、备份和服务覆盖文件；重新安装后可继续管理。
+
+### 已有部署迁移
+
+`rdp-auth launch` 会识别旧版 `/etc/rdp-auth`（`rdp-auth.service`）与标准 `/etc/rdp-access-auth`（`rdp-access-auth.service`）。同时存在两种布局时优先打开正在运行的部署，也可用 `rdp-auth --profile legacy launch` 或 `rdp-auth --profile system launch` 指定。目录残留或配置损坏仍进入管理页排查，不会触发首次初始化。
+
+管理页的“迁移到软件包版本”先检查现有服务、配置、词库和数据库，展示具体路径和原端口。点击“备份并迁移”后，在临时副本上验证新版兼容性，暂停认证服务，用 SQLite 备份接口保存完整数据库（含 WAL 中已提交的数据），再通过专用 systemd 覆盖文件切换到 `/usr/lib/rdp-access-auth`。原配置文件、会话密钥、密码哈希、通行密钥、临时密码、服务名、端口与开机启动设置均沿用；Cloudflare 和 SakuraFrp 连接器继续使用原配置。
+
+健康检查失败时恢复原程序和数据库；进程中断或自动恢复失败时，下次打开管理页会提供“恢复原服务”。备份位于原配置目录下的 `migration-backups/`，迁移记录为 `package-migration.json`。原代码目录保留，便于恢复。迁移期间请保持终端运行；自定义服务名、状态目录或启动方式不在自动迁移范围内。
+
+0.3.1 修复了迁移服务的凭据路径引号问题。0.3.0 若出现 `243/CREDENTIALS`，升级到 0.3.1 后重新打开管理页即可重试；管理页会保留上次失败原因。维护者可运行 `python3 tools/check_migration_systemd.py`，使用临时用户服务检查真实 systemd 的凭据解析，无需操作已部署的认证服务。
+
+```bash
+sudo rdp-auth --profile legacy migrate --dry-run  # 只展示计划
+rdp-auth --profile legacy migrate                # 终端确认后迁移，自动请求 sudo
+rdp-auth --profile legacy migrate --recover      # 恢复未完成的迁移
+```
+
+迁移成功后仍使用原档案管理，例如 `sudo rdp-auth --profile legacy gui`；以后更新 RPM 并重启 `rdp-auth.service` 即可，无需重新填写凭据。
+
+管理页按服务使用的程序显示部署类型：迁移成功或直接使用软件包部署时显示“软件包部署”，并隐藏迁移入口。保留 `legacy` 档案和原路径不代表仍在运行旧版；只有旧版程序或待完成、待恢复的迁移才显示迁移面板。
+
+RPM 的包名为 `rdp-access-auth`，应用显示名为 **RDP Access Auth**，作者与打包者为 **a彬彬a**。桌面图标安装到标准 hicolor 图标目录，软件中心信息由 AppStream 提供；项目使用 MIT，`rpm -qi` 的 `License` 字段同时列出随包分发依赖的许可证。许可证全文通过 RPM `%license` 安装，作者说明通过 `%doc` 安装。
+
+### 教程中的助手链接
+
+安装软件包后，桌面环境通过 `x-scheme-handler/rdp-auth` 识别以下链接；浏览器可能先询问是否打开外部应用。
+
+| 链接 | 打开的功能 |
+| --- | --- |
+| `rdp-auth://open` | 自动识别：已有部署进入管理，否则打开首次部署 |
+| `rdp-auth://manage` | 管理页面 |
+| `rdp-auth://migrate` | 管理页的迁移面板，展示条件与计划 |
+| `rdp-auth://logs` | 管理页并读取服务日志 |
+| `rdp-auth://deploy` | 首次部署入口；检测到已有部署时进入管理 |
+
+可追加 `?profile=legacy` 或 `?profile=system` 指定已有部署，例如 `rdp-auth://migrate?profile=legacy`；默认 `profile=auto`。链接只导航到功能，不执行迁移、重启、配置修改，也不接收密码、Token、文件路径或命令。没有部署时先进入首次向导。
+
+教程 HTML 示例：
+
+```html
+<a href="rdp-auth://migrate">打开助手，检查迁移</a>
+<a href="rdp-auth://logs?profile=legacy">查看旧版服务日志</a>
+```
+
+部分文档平台会过滤自定义协议，建议同时提供终端命令作为备用入口：
+
+```bash
+rdp-auth launch 'rdp-auth://migrate?profile=legacy'
+xdg-mime query default x-scheme-handler/rdp-auth
+```
 
 **兼容性：** 安装包按 CPU 架构和系统 Python 次版本构建，不能跨 ABI 混装。当前本机产物对应 x86_64 / Python 3.14（RPM 为 Fedora 44 构建；本机构建的 `py314` DEB 也要求 Python 3.14，不适用于 Ubuntu 24.04 默认 Python）。仓库的 Native packages 工作流分别在 Fedora 44 和 Ubuntu 24.04 中构建匹配的包，产物在 Actions 的 Artifacts 中下载。生成文件本身不代表已经发布到软件源或 Release。
 
 维护者可在匹配的发行版上执行 `tools/build-package rpm` 或 `tools/build-package deb`；需要系统提供 `rpmbuild` 或 `dpkg-deb`、Python venv 和 pip。构建过程只使用项目 `.build/` 与临时目录，输出到 `dist/`，并生成对应的 `.sha256` 校验文件。Python 库版本由 `requirements-package.txt` 固定，库自带的许可证和版本清单随包提供；游戏词库数据不随包分发。
+
+项目更新后，可在项目根目录运行一键脚本。发布新版前先修改 `VERSION`（例如 `1.2.3`），然后执行：
+
+```bash
+./build-packages.sh                     # 同时生成 .deb、.rpm 和各自的 .sha256
+./build-packages.sh deb                 # 仅生成 DEB
+./build-packages.sh rpm                 # 仅生成 RPM
+./build-packages.sh --output ./dist/new # 指定输出目录
+./build-packages.sh --help
+```
+
+脚本使用当前工作区中的代码，无需先提交 Git；默认输出到项目的 `dist/`，同名产物会覆盖。它自动创建或复用 `.build/package-venv` 并通过 pip 安装固定版本依赖，首次运行需要联网。请以普通用户运行，不需要 `sudo`。两种格式都基于当前主机环境构建，不会自动切换发行版；向其他发行版分发时请使用上述 Native packages 工作流或在目标发行版上打包。
+
+首次构建前安装系统工具（二选一，只有这一步需要管理员权限）：
+
+```bash
+# Fedora
+sudo dnf install python3 python3-pip rpm-build dpkg tar gzip
+# Debian / Ubuntu
+sudo apt-get install python3 python3-venv python3-pip dpkg-dev rpm tar gzip
+```
+
+生成后可以在输出目录运行 `sha256sum -c <安装包文件名>.sha256` 校验文件；脚本只生成安装包，不会安装或重启服务。
 
 ## 命令行与浏览器管理
 
@@ -70,7 +144,7 @@ sudo rdp-auth --profile system --service cloudflared-rdp-access.service service 
 
 管理页默认位于 `http://127.0.0.1:18124/`。启动时会输出含临时访问令牌的完整链接，**请使用该完整链接打开**。令牌在浏览器载入后从地址栏移除；服务器重启后需使用新链接。浏览器无法自动打开时，可执行 `./rdp-auth gui --no-open` 并复制链接；端口被占用时使用 `./rdp-auth gui --port 18125`。终端按 `Ctrl+C` 关闭管理服务。
 
-管理界面可创建和修改认证域名、RDP 地址、SakuraFrp 隧道 ID 与 Token、固定密码、Turnstile 和词库路径，也可查看认证状态、解除封禁。显式选择系统部署后，还可启动、停止、重启认证服务和查看日志。界面支持手机尺寸、深浅主题、密码显示切换、未保存提醒以及并发修改冲突提示。
+管理界面可创建和修改认证域名、RDP 地址、SakuraFrp 隧道 ID 与 Token、固定密码、Turnstile 和词库路径，也可查看认证状态、解除封禁。显式选择系统部署后，还可启动、停止、重启认证服务和查看日志。界面沿用个人官网的悬浮胶囊导航、编号分区、深浅主题与淡入动效，按运行概览、认证配置、运行维护组织内容；支持手机菜单、减少动态效果、加载失败重试、密码显示切换、未保存提醒以及并发修改冲突提示。图标使用本地打包的 Lucide（ISC），许可随 RPM 的 `%license` 安装，管理页面不需要外部字体或图标网络请求。
 
 **源码模式默认只管理项目内的 `private/portal-settings.json` 和 `private/state.sqlite3`，不自动识别或控制本机已部署服务。** RPM/DEB 的普通本地配置保存到 `$XDG_DATA_HOME/rdp-access-auth`，未设置时使用 `~/.local/share/rdp-access-auth`；管理系统部署仍需显式选择 `--profile system`。本地模式的系统服务按钮禁用；可在另一个终端用 `./rdp-auth serve` 运行当前项目。配置界面与公网认证页面是两个独立入口，管理页仅监听 `127.0.0.1`，不应通过 Cloudflare Tunnel 暴露到公网。GUI 和配置命令仅依赖系统 Python 3 的标准库，启动前无需安装 Flask 或 WebAuthn。
 
@@ -94,7 +168,7 @@ sudo rdp-auth --profile system --service cloudflared-rdp-access.service service 
 | 预览认证页 | `./rdp-auth preview` |
 | 离线回归测试 | `./rdp-auth test` |
 
-所有子命令支持 `--help`。密码和 Token 通过终端隐藏输入，不作为命令参数；浏览器内已有的密码、Token 和 Secret key 留空表示保留。新配置需要填写固定密码与 Token；Turnstile 使用明确的关闭开关清除密钥。
+所有子命令支持 `--help`。密码和 Token 通过终端隐藏输入，不作为命令参数；管理页自动填入已有 Token 和 Secret key，默认以掩码显示，点击眼睛可查看并直接修改。固定密码只保存校验哈希，无法还原原文；已有密码显示“已设置”，点击“更换密码”后输入新密码，也可取消更换。未修改的凭据不会随保存重复提交。新配置需要填写固定密码与 Token；Turnstile 使用明确的关闭开关清除密钥。
 
 修改时保留原 `session_key`、未修改的密码哈希和其他配置字段。写入采用文件锁、原子替换与 `0600` 权限，上一版保存到同目录的 `portal-settings.json.bak`（自定义文件名时同样追加 `.bak`）。备份包含私密信息，应与配置一起妥善保管。**保存配置不会自动重启服务**：前台运行时退出后重新执行 `serve`；系统部署在管理页点击“重启”，或执行对应的 `service restart`。更换认证域名后还需同步 Cloudflare Tunnel，并在新域名重新绑定通行密钥。
 

@@ -35,7 +35,13 @@ def main():
                 page.locator('#hostname').fill('auth.example.test')
                 page.locator('#rdp-address').fill('desktop.example.test:3389')
                 page.locator('#tunnel-id').fill('12')
-                page.locator('#sakura-token').fill('fixture-sakura-token')
+                toml = fixture.root / 'frpc.toml'
+                toml.write_text('serverAddr="node.example.test"\nserverPort=7000\n[auth]\ntoken="fixture-sakura-token"\n[[proxies]]\nname="rdp"\ntype="tcp"\nlocalIP="desktop.example.test"\nlocalPort=3389\n')
+                page.locator('#sakura-config').fill(str(toml))
+                with page.expect_response('**/api/deploy/sakura/inspect') as response:
+                    page.locator('#inspect-sakura').click()
+                assert 'fixture-sakura-token' not in response.value.text()
+                expect(page.locator('#sakura-result')).to_contain_text('Token 已找到')
                 page.locator('#password').fill('Fixture-browser-password-1234!')
                 page.locator('#password-confirm').fill('Wrong-password-1234!')
                 page.locator('#cloudflare-token').fill('fixture-cloudflare-token')

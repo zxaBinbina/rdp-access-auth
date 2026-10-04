@@ -34,6 +34,18 @@ def main():
             archive = subprocess.run(['rpm2cpio', str(args.package)], check=True, capture_output=True)
             subprocess.run(['cpio', '-idm', '--quiet', '--no-absolute-filenames'], input=archive.stdout, cwd=root, check=True)
         app = root / 'usr/lib/rdp-access-auth'
+        desktop = (root / 'usr/share/applications/rdp-access-auth.desktop').read_text()
+        assert 'Exec=rdp-auth launch %u\n' in desktop
+        assert 'MimeType=x-scheme-handler/rdp-auth;\n' in desktop
+        assert 'Name[zh_CN]=RDP Access Auth\n' in desktop
+        assert (root / 'usr/share/icons/hicolor/512x512/apps/rdp-access-auth.png').is_file()
+        assert (app / 'admin_ui/rdp-access-auth.png').is_file()
+        for asset in ('icons.svg', 'management.css', 'theme.js'):
+            assert (app / 'admin_ui' / asset).is_file()
+        assert (root / 'usr/share/licenses/rdp-access-auth/Lucide-ISC').is_file()
+        assert (root / 'usr/share/licenses/rdp-access-auth/LICENSE').is_file()
+        assert (root / 'usr/share/doc/rdp-access-auth/AUTHORS').is_file()
+        assert (root / 'usr/share/metainfo/cc.cd.zxabinbina.RDPAccessAuth.metainfo.xml').is_file()
         marker = json.loads((app / 'PACKAGED.json').read_text())
         assert marker['python'] == f'{sys.version_info.major}.{sys.version_info.minor}', marker
         assert not (root / 'etc').exists(), 'The package must not ship user configuration'
@@ -42,7 +54,7 @@ def main():
         env.pop('RDP_AUTH_STATE', None)
         env.pop('RDP_AUTH_WORDLIST', None)
         command = ['/usr/bin/python3', str(app / 'rdp_manager.py')]
-        for arguments in (['--help'], ['setup'], ['deploy', '--dry-run']):
+        for arguments in (['--help'], ['setup'], ['deploy', '--dry-run'], ['launch', '--help'], ['migrate', '--help']):
             result = subprocess.run([*command, *arguments], env=env, capture_output=True, text=True)
             assert result.returncode == 0, result.stderr
         words = root / 'words.json'
@@ -79,6 +91,12 @@ def main():
                 os.killpg(process.pid, signal.SIGTERM)
             process.wait(timeout=10)
             log.close()
+        # Test the actual bundled runtime's migration compatibility probe.
+        result = subprocess.run(['/usr/bin/python3', '-c',
+            'import package_bootstrap; import sys; from pathlib import Path; from migration import validate_runtime; '
+            'validate_runtime(*(Path(p) for p in sys.argv[1:]))', str(target.config), str(target.state), str(words)],
+            cwd=app, env=env, capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
     print('安装包解包验证通过：系统 Python 加载内置依赖、CLI、部署预览、Gunicorn 启动、数据库创建、健康检查和认证页面。未安装或修改系统服务。')
 
 
