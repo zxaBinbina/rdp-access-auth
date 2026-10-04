@@ -1,6 +1,6 @@
 # 词库来源
 
-运行 `python tools/build_wordlist.py --download` 下载公开数据并构建本机词库。原始游戏资源与生成的词库不随仓库分发，分别位于被 Git 忽略的 `.cache/wordlists/` 和 `wordlists/objects.json`。
+运行 `./rdp-auth wordlist --download` 下载公开数据并构建本机词库。原始游戏资源与生成的词库不随仓库分发，分别位于被 Git 忽略的 `.cache/wordlists/` 和 `wordlists/objects.json`。
 
 - 美食：[THUOCL](https://github.com/thunlp/THUOCL) 饮食分类。上游允许个人、研究与商业使用，具体条件以上游说明为准。引用：韩世依等，THUOCL：清华大学开放中文词库，2016。
 - Minecraft：[minecraft-assets](https://github.com/InventivetalentDev/minecraft-assets) 的 1.21.1 简体中文资源，只提取方块、物品、实体与附魔名称。

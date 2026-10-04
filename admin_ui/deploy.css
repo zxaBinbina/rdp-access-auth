@@ -1,0 +1,11 @@
+.wizard-shell { max-width: 1160px; }
+.wizard-grid { grid-template-columns: minmax(0, 1fr) 300px; }
+.acknowledgement { display: flex; gap: 10px; color: var(--muted); margin-bottom: 24px; }
+.acknowledgement input { flex-shrink: 0; align-self: flex-start; margin-top: 5px; }
+.wizard-notes, #events { padding-left: 20px; color: var(--muted); font-size: 12px; }
+.wizard-notes li, #events li { margin: 14px 0; }
+#review, #complete { margin-top: 24px; border-top: 1px solid var(--line); padding-top: 24px; }
+#plan { font-size: 12px; max-height: none; }
+#site-url { color: var(--accent); margin-top: 18px; overflow-wrap: anywhere; }
+.wizard-shell .notice { position: sticky; top: 12px; z-index: 2; }
+@media (max-width: 760px) { .wizard-grid { grid-template-columns: 1fr; } }

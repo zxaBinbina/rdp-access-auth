@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+RDP_PACKAGE_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+if [ ! -x "$RDP_PACKAGE_ROOT/.build/package-venv/bin/python" ]; then
+    python3 -m venv "$RDP_PACKAGE_ROOT/.build/package-venv"
+fi
+"$RDP_PACKAGE_ROOT/.build/package-venv/bin/python" -m pip install -r "$RDP_PACKAGE_ROOT/requirements-package.txt"
+exec "$RDP_PACKAGE_ROOT/.build/package-venv/bin/python" "$RDP_PACKAGE_ROOT/tools/build_packages.py" "$@"

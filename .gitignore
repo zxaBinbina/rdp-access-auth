@@ -11,3 +11,5 @@ logs/
 wordlists/objects.json
 *.pem
 *.key
+.build/
+dist/

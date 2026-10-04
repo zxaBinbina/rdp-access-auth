@@ -1,0 +1,12 @@
+#!/bin/sh
+# A stable entry point; GUI and configuration need only the Python standard library.
+set -eu
+RDP_AUTH_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ -x "$RDP_AUTH_ROOT/.venv/bin/python" ]; then
+    exec "$RDP_AUTH_ROOT/.venv/bin/python" "$RDP_AUTH_ROOT/rdp_manager.py" "$@"
+fi
+if command -v python3 >/dev/null 2>&1; then
+    exec python3 "$RDP_AUTH_ROOT/rdp_manager.py" "$@"
+fi
+printf '%s\n' '未找到 Python 3。请先通过系统软件管理器安装 Python 3，再运行 ./rdp-auth。' >&2
+exit 1

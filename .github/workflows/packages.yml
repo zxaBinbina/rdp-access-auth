@@ -1,0 +1,38 @@
+name: Native packages
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  rpm:
+    runs-on: ubuntu-latest
+    container: fedora:44
+    steps:
+      - run: dnf install -y git python3 python3-pip rpm-build cpio findutils tar gzip
+      - uses: actions/checkout@v4
+      - run: tools/build-package rpm
+      - run: .build/package-venv/bin/python -m unittest discover -q
+      - run: .build/package-venv/bin/python tools/check_package.py dist/*.rpm
+      - run: dnf install -y ./dist/*.rpm
+      - run: rdp-auth --help && rdp-auth setup && rdp-auth deploy --dry-run
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rdp-access-auth-fedora44-x86_64
+          path: dist/*
+  deb:
+    runs-on: ubuntu-latest
+    container: ubuntu:24.04
+    steps:
+      - run: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git python3 python3-venv python3-pip dpkg-dev
+      - uses: actions/checkout@v4
+      - run: tools/build-package deb
+      - run: .build/package-venv/bin/python -m unittest discover -q
+      - run: .build/package-venv/bin/python tools/check_package.py dist/*.deb
+      - run: apt-get install -y ./dist/*.deb
+      - run: rdp-auth --help && rdp-auth setup && rdp-auth deploy --dry-run
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rdp-access-auth-ubuntu24.04-amd64
+          path: dist/*

@@ -1,0 +1,9 @@
+# Lock the libraries bundled by native packages, including transitive dependencies.
+-r requirements.txt
+blinker==1.9.0
+click==8.5.0
+itsdangerous==2.2.0
+jinja2==3.1.6
+markupsafe==3.0.4
+werkzeug==3.1.9
+packaging==26.3

@@ -4,6 +4,112 @@
 
 本项目适合个人远程桌面，后端为 Python、Flask、SQLite 和 WebAuthn，通过 Cloudflare Tunnel 提供 HTTPS 页面，通过 SakuraFrp API 为来源 IPv4 授权。
 
+## RPM / DEB 安装与首次部署
+
+面向普通用户提供 **RPM 和 DEB 安装包**。软件包包含项目、浏览器界面和所需 Python 库；Python 运行时、systemd、sudo 等由系统包管理器安装。用户无需选择 Python 命令、创建虚拟环境或运行 pip。
+
+软件包仅安装程序和应用菜单入口，**安装时不会收集凭据、覆盖已有配置或自动启用服务**。首次部署由用户主动运行向导。
+
+```bash
+# Fedora：安装下载的 RPM（示例为本项目的 Fedora 44 / x86_64 构建）
+sudo dnf install ./rdp-access-auth-0.2.0-1.fc44.x86_64.rpm
+
+# Debian / Ubuntu：使用为该发行版及 Python 版本构建的 DEB
+sudo apt install ./rdp-access-auth_版本_py版本_架构.deb
+```
+
+安装后，从应用菜单打开 **RDP Access Auth 部署向导**，或选择下列任一方式：
+
+```bash
+rdp-auth deploy --gui   # 浏览器表单向导
+rdp-auth deploy         # 终端逐项询问，密码和 Token 隐藏输入
+rdp-auth deploy --dry-run  # 只查看部署位置和已有部署冲突
+```
+
+首次部署需要系统权限，`deploy` 会通过 sudo 请求管理员密码。浏览器会以原桌面用户身份打开；无法自动打开时，复制终端输出的完整链接即可。无桌面环境可使用终端向导。图形向导的本机端口默认为 18124，可通过 `--port` 修改；`--no-open` 仅输出链接。
+
+向导需要这些信息：
+
+| 信息 | 说明 |
+| --- | --- |
+| 认证域名 | 例如 `auth.example.com`，用于浏览器 HTTPS 认证入口 |
+| RDP 连接地址 | 已正常工作的远程桌面域名或 IP 与端口 |
+| SakuraFrp 隧道 ID、API Token | 已建立指向远程桌面的 TCP 隧道，并设置 `auth_mode = server` 和需要的 `auth_time` |
+| 固定访问密码 | 16～128 位，含大小写字母、数字和特殊符号 |
+| Cloudflare Tunnel Token | 在 Cloudflare 控制台创建远程管理的 Tunnel，复制安装命令中的 Token 部分 |
+| 本机认证端口 | 默认 18089；在 Cloudflare Tunnel 配置“认证域名 → `http://127.0.0.1:18089`”，更换端口时同步修改路由 |
+| Turnstile / 已有词库 | 可选；词库留空时自动下载并核对来源快照 |
+
+向导先在临时目录中校验输入、准备词库，并下载固定版本、校验 SHA-256 的 cloudflared。准备完成后展示具体计划，点击确认才会写入系统、注册并启动服务、启用开机自启，以及执行本机健康检查。配置保存在 `/etc/rdp-access-auth`，Token 通过 systemd `LoadCredential` 传递，不放在进程命令行中。Cloudflare 连接器安装到 `/usr/local/libexec/rdp-access-auth/cloudflared`；不会替换系统已有的 cloudflared 命令。
+
+向导负责本机组件安装。远程桌面服务、SakuraFrp 隧道、Cloudflare 账户和域名路由需提前准备，向导不创建账户或修改远程平台配置。“部署完成”表示本机认证健康检查通过且两个服务已启动，仍需打开认证域名验证 HTTPS 路由、登录和真实 RDP 连接。
+
+检测到标准或旧版部署时会拒绝覆盖。部署文件写入后若启动失败，会尝试停止本次创建的服务，并保留配置、数据库和部署记录供排查；不要重新初始化凭据。后续管理使用：
+
+```bash
+sudo rdp-auth --profile system gui
+sudo rdp-auth --profile system status
+sudo rdp-auth --profile system service logs
+sudo rdp-auth --profile system --service cloudflared-rdp-access.service service logs
+```
+
+更新软件包保留配置和状态，服务需在管理页中手动重启以加载新代码。卸载软件包时，会停止向导创建的两个服务，但保留私密配置、数据库和单独下载的连接器；手动源码部署及旧版服务不由软件包迁移。
+
+**兼容性：** 安装包按 CPU 架构和系统 Python 次版本构建，不能跨 ABI 混装。当前本机产物对应 x86_64 / Python 3.14（RPM 为 Fedora 44 构建；本机构建的 `py314` DEB 也要求 Python 3.14，不适用于 Ubuntu 24.04 默认 Python）。仓库的 Native packages 工作流分别在 Fedora 44 和 Ubuntu 24.04 中构建匹配的包，产物在 Actions 的 Artifacts 中下载。生成文件本身不代表已经发布到软件源或 Release。
+
+维护者可在匹配的发行版上执行 `tools/build-package rpm` 或 `tools/build-package deb`；需要系统提供 `rpmbuild` 或 `dpkg-deb`、Python venv 和 pip。构建过程只使用项目 `.build/` 与临时目录，输出到 `dist/`，并生成对应的 `.sha256` 校验文件。Python 库版本由 `requirements-package.txt` 固定，库自带的许可证和版本清单随包提供；游戏词库数据不随包分发。
+
+## 命令行与浏览器管理
+
+在项目目录执行统一入口，无需选择 Python 环境或记忆脚本路径：
+
+```bash
+./rdp-auth          # 显示命令帮助
+./rdp-auth gui      # 启动管理页并打开浏览器
+```
+
+管理页默认位于 `http://127.0.0.1:18124/`。启动时会输出含临时访问令牌的完整链接，**请使用该完整链接打开**。令牌在浏览器载入后从地址栏移除；服务器重启后需使用新链接。浏览器无法自动打开时，可执行 `./rdp-auth gui --no-open` 并复制链接；端口被占用时使用 `./rdp-auth gui --port 18125`。终端按 `Ctrl+C` 关闭管理服务。
+
+管理界面可创建和修改认证域名、RDP 地址、SakuraFrp 隧道 ID 与 Token、固定密码、Turnstile 和词库路径，也可查看认证状态、解除封禁。显式选择系统部署后，还可启动、停止、重启认证服务和查看日志。界面支持手机尺寸、深浅主题、密码显示切换、未保存提醒以及并发修改冲突提示。
+
+**源码模式默认只管理项目内的 `private/portal-settings.json` 和 `private/state.sqlite3`，不自动识别或控制本机已部署服务。** RPM/DEB 的普通本地配置保存到 `$XDG_DATA_HOME/rdp-access-auth`，未设置时使用 `~/.local/share/rdp-access-auth`；管理系统部署仍需显式选择 `--profile system`。本地模式的系统服务按钮禁用；可在另一个终端用 `./rdp-auth serve` 运行当前项目。配置界面与公网认证页面是两个独立入口，管理页仅监听 `127.0.0.1`，不应通过 Cloudflare Tunnel 暴露到公网。GUI 和配置命令仅依赖系统 Python 3 的标准库，启动前无需安装 Flask 或 WebAuthn。
+
+常用命令：
+
+| 操作 | 命令 |
+| --- | --- |
+| 交互创建配置 | `./rdp-auth config init` |
+| 查看配置摘要（不输出密钥） | `./rdp-auth config show` |
+| 修改连接地址 | `./rdp-auth config set --rdp-address desktop.example.com:3389` |
+| 修改固定密码 | `./rdp-auth config set --password` |
+| 更换 SakuraFrp Token | `./rdp-auth config set --sakura-token` |
+| 启用或更新 Turnstile | `./rdp-auth config set --turnstile` |
+| 关闭 Turnstile | `./rdp-auth config set --disable-turnstile` |
+| 校验配置和词库 | `./rdp-auth config validate` |
+| 查看运行与认证状态 | `./rdp-auth status`（脚本可加 `--json`） |
+| 解除认证封禁 | `./rdp-auth unlock` |
+| 安装认证服务依赖 | `./rdp-auth setup` |
+| 下载并构建词库 | `./rdp-auth wordlist --download` |
+| 前台运行认证服务 | `./rdp-auth serve`（默认 `127.0.0.1:18089`，可用 `--port` 修改） |
+| 预览认证页 | `./rdp-auth preview` |
+| 离线回归测试 | `./rdp-auth test` |
+
+所有子命令支持 `--help`。密码和 Token 通过终端隐藏输入，不作为命令参数；浏览器内已有的密码、Token 和 Secret key 留空表示保留。新配置需要填写固定密码与 Token；Turnstile 使用明确的关闭开关清除密钥。
+
+修改时保留原 `session_key`、未修改的密码哈希和其他配置字段。写入采用文件锁、原子替换与 `0600` 权限，上一版保存到同目录的 `portal-settings.json.bak`（自定义文件名时同样追加 `.bak`）。备份包含私密信息，应与配置一起妥善保管。**保存配置不会自动重启服务**：前台运行时退出后重新执行 `serve`；系统部署在管理页点击“重启”，或执行对应的 `service restart`。更换认证域名后还需同步 Cloudflare Tunnel，并在新域名重新绑定通行密钥。
+
+只有需要管理已部署服务时，才显式选择配置档案；全局选项放在子命令之前：
+
+| 档案 | 配置文件 | 数据库 | 服务 |
+| --- | --- | --- | --- |
+| `local`（默认） | 项目内 `private/portal-settings.json` | 项目内 `private/state.sqlite3` | 不控制 systemd |
+| `system` | `/etc/rdp-access-auth/portal-settings.json` | `/var/lib/rdp-access-auth/state.sqlite3` | `rdp-access-auth.service` |
+| `legacy` | `/etc/rdp-auth/portal-settings.json` | `/var/lib/rdp-auth/state.sqlite3` | `rdp-auth.service` |
+
+例如，标准部署使用 `sudo ./rdp-auth --profile system gui --no-open`，然后在普通用户的浏览器中打开终端输出的完整链接；旧部署将 `system` 换成 `legacy`。`sudo ./rdp-auth --profile system service restart` 会重启选定的服务。普通管理命令不会自行调用 sudo，权限不足时给出明确提示；首次部署命令 `deploy` 会主动请求 sudo 权限。
+
+自定义位置可使用 `./rdp-auth --config /path/settings.json --state /path/state.sqlite3 gui`。自定义 systemd 服务还需显式指定部署档案和 `--service example.service`，用户服务可加 `--scope user`。这些选择会在管理页显示；它们不会迁移、覆盖或安装已有部署。`serve` 始终运行当前项目代码，`wordlist` 始终构建当前项目词库，系统部署的代码与词库更新仍按下文安装步骤操作。
+
 ## 功能
 
 | 认证方式     | 行为                                                                               |
@@ -57,9 +163,8 @@ flowchart LR
 在下载或克隆后的项目目录中执行：
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python tools/build_wordlist.py --download
+./rdp-auth setup
+./rdp-auth wordlist --download
 ```
 
 首次构建会下载词库并生成 `wordlists/objects.json`。数据源包括 THUOCL 饮食词库、Minecraft 简体中文名称以及 genshin-db 原神中文名称；来源与 SHA-256 快照见 `wordlists/sources.json`。当前快照可生成 12,095 个词。
@@ -67,7 +172,7 @@ python3 -m venv .venv
 原神 API 会更新。如果下载数据与快照不同，程序会停止；确认接受更新后执行：
 
 ```bash
-.venv/bin/python tools/build_wordlist.py --download --refresh-sources
+./rdp-auth wordlist --download --refresh-sources
 ```
 
 原始下载内容保存在 `.cache/wordlists/`，生成文件和缓存均被 Git 忽略。更换词库不会重置已有临时密码；重新启动认证服务后，下一次正常轮换才使用新词库。
@@ -75,13 +180,13 @@ python3 -m venv .venv
 ### 2. 生成私密配置
 
 ```bash
-.venv/bin/python tools/init_config.py \
+./rdp-auth config init \
   --hostname auth.example.com \
   --rdp-address desktop.example.com:26869 \
   --tunnel-id 12345
 ```
 
-工具会在终端隐藏输入固定访问密码和 SakuraFrp API Token，生成随机密码盐与会话密钥，写入权限为 `0600` 的 `private/portal-settings.json`。不会覆盖现有配置。`portal-settings.example.json` 仅说明结构，不可直接部署。
+也可执行 `./rdp-auth gui` 在浏览器中填写相同配置。命令行工具会在终端隐藏输入固定访问密码和 SakuraFrp API Token，生成随机密码盐与会话密钥，写入权限为 `0600` 的 `private/portal-settings.json`。不会覆盖现有配置。`portal-settings.example.json` 仅说明结构，不可直接部署。
 
 配置中的 `session_key` 还用于派生临时密码加密密钥和通行密钥账户标识，应与状态数据库一起备份；运行后不要随意重新生成。
 
@@ -90,13 +195,18 @@ python3 -m venv .venv
 以下命令仍在项目目录执行。应用代码放在 `/opt/rdp-access-auth`，凭据放在 `/etc/rdp-access-auth`，运行状态由 systemd 保存到 `/var/lib/rdp-access-auth`。
 
 ```bash
-sudo install -d -m 755 /opt/rdp-access-auth/wordlists /opt/rdp-access-auth/tools
+sudo install -d -m 755 /opt/rdp-access-auth/wordlists /opt/rdp-access-auth/tools /opt/rdp-access-auth/admin_ui /opt/rdp-access-auth/deployment
 sudo install -m 644 portal.py portal.html auth_credentials.py auth_guard.py \
+  management.py management_web.py rdp_manager.py package_bootstrap.py deploy.py VERSION \
   requirements.txt requirements-runtime.txt /opt/rdp-access-auth/
+sudo install -m 755 rdp-auth /opt/rdp-access-auth/
+sudo install -m 644 admin_ui/index.html admin_ui/app.css admin_ui/app.js /opt/rdp-access-auth/admin_ui/
+sudo install -m 644 admin_ui/deploy.html admin_ui/deploy.css admin_ui/deploy.js /opt/rdp-access-auth/admin_ui/
+sudo install -m 644 deployment/cloudflared-downloads.json /opt/rdp-access-auth/deployment/
 sudo install -m 644 wordlists/objects.json /opt/rdp-access-auth/wordlists/
-sudo install -m 644 tools/admin.py /opt/rdp-access-auth/tools/
-sudo python3 -m venv /opt/rdp-access-auth/.venv
-sudo /opt/rdp-access-auth/.venv/bin/python -m pip install -r /opt/rdp-access-auth/requirements.txt
+sudo install -m 644 wordlists/sources.json /opt/rdp-access-auth/wordlists/
+sudo install -m 644 tools/admin.py tools/build_wordlist.py tools/preview.py /opt/rdp-access-auth/tools/
+sudo /opt/rdp-access-auth/rdp-auth setup
 sudo install -d -m 700 /etc/rdp-access-auth
 sudo install -m 600 private/portal-settings.json /etc/rdp-access-auth/portal-settings.json
 sudo install -m 644 deployment/rdp-access-auth.service /etc/systemd/system/
@@ -167,11 +277,12 @@ auth_time = 6h
 ```bash
 systemctl status rdp-access-auth.service cloudflared-rdp-access.service
 journalctl -u rdp-access-auth.service -u cloudflared-rdp-access.service --since '10 minutes ago'
-sudo python3 /opt/rdp-access-auth/tools/admin.py status
-sudo python3 /opt/rdp-access-auth/tools/admin.py unlock
+sudo /opt/rdp-access-auth/rdp-auth --profile system status
+sudo /opt/rdp-access-auth/rdp-auth --profile system unlock
+sudo /opt/rdp-access-auth/rdp-auth --profile system gui --no-open
 ```
 
-`unlock` 只解除本机数据库中的认证封禁，不修改密码或通行密钥。其他部署路径可通过 `--state /path/to/state.sqlite3` 指定数据库。
+`unlock` 只解除选定数据库中的认证封禁，不修改密码或通行密钥。其他部署路径可通过 `--state /path/to/state.sqlite3` 指定数据库，路径选项需放在子命令前。
 
 - 403：检查认证域名、转发 Host、HTTPS、Cookie 和 Cloudflare Tunnel 是否按模板连接 loopback。
 - 502：检查 Tunnel 是否能连接本机 18089，以及 SakuraFrp Token、隧道 ID 和 API 网络连通性。
@@ -184,16 +295,25 @@ sudo python3 /opt/rdp-access-auth/tools/admin.py unlock
 ## 开发与测试
 
 ```bash
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m unittest -q test_auth_guard.py test_portal.py test_turnstile.py
+./rdp-auth setup
+./rdp-auth test
 ```
 
-单元测试使用临时数据库和合成词库，不需要真实密码、Token、域名、Cloudflare 或 SakuraFrp 账户。覆盖密码轮换、并发、封禁、CSRF、来源、IPv4 和 WebAuthn 签名/重放等行为。仓库提供 GitHub Actions 测试工作流。
+单元测试使用临时数据库和合成词库，不需要真实密码、Token、域名、Cloudflare 或 SakuraFrp 账户。覆盖密码轮换、并发、封禁、CSRF、来源、IPv4、WebAuthn 签名/重放，以及管理配置的密钥保留、文件权限、备份、并发冲突、本机 HTTP 访问控制与解封。systemd 操作在测试中模拟，不操作已部署服务。管理 HTTP 测试需要允许监听本机临时端口。仓库提供 GitHub Actions 测试工作流。
+
+管理页的真实浏览器回归可使用：
+
+```bash
+./rdp-auth setup --browser
+./rdp-auth test --browser
+```
+
+测试仅使用临时文件，覆盖表单保存、Turnstile 开关、密钥保留、冲突提示、解封、模拟服务操作，以及深浅主题和 320～1440px 布局。测试使用已安装的 Google Chrome，或 Playwright 下载的 Chromium；Linux 还需具备浏览器所需系统库。
 
 ### 本地样式预览
 
 ```bash
-.venv/bin/python tools/preview.py
+./rdp-auth preview
 ```
 
 在浏览器打开 `http://127.0.0.1:18123/`，可切换三种认证方式和深浅主题；`/credentials` 可预览凭据管理页。预览使用示例数据，不读取真实配置、不执行授权或密钥操作，也不加载真实人机验证。
@@ -202,6 +322,11 @@ sudo python3 /opt/rdp-access-auth/tools/admin.py unlock
 
 ```text
 portal.py / portal.html        网页、接口与准入流程
+rdp-auth / rdp_manager.py       统一命令行入口与环境选择
+management.py                  配置、状态与服务管理的共用逻辑
+management_web.py / admin_ui/   本机浏览器管理服务与中文界面
+deploy.py                       首次部署、下载校验、服务注册与健康检查
+packaging/ / tools/build-package RPM/DEB 打包、应用菜单入口
 auth_credentials.py           临时密码与通行密钥
 auth_guard.py                 封禁、限流和并发控制
 tools/                        配置初始化、词库构建、本机管理
@@ -218,9 +343,10 @@ test_*.py                     离线测试
 
 在 Cloudflare Turnstile 创建或选用已有组件，允许的主机名需包含实际认证域名
 （例如 `auth.example.com`）。将 Site key 和 Secret key 分别写入服务器私有配置的
-`turnstile_site_key`、`turnstile_secret_key` 字段；初始化工具也会交互询问。
-两项都留空时不启用，只填写其中一项会拒绝启动。已有部署请编辑原配置，保留
-原密码哈希、会话密钥及其他字段，不要重新初始化。配置文件保持 root 所有、0600 权限，
+`turnstile_site_key`、`turnstile_secret_key` 字段；可在管理界面启用 Turnstile，或运行
+`./rdp-auth config set --turnstile`（系统部署需在 `config` 前指定对应 `--profile`，并使用 sudo）。
+两项都为空时不启用，只填写其中一项会拒绝启动。已有部署使用管理工具修改原配置，保留
+原密码哈希、会话密钥及其他字段，不要重新初始化。配置文件保持原所有者、0600 权限，
 通过现有 systemd `LoadCredential` 提供给服务，然后重启认证服务。
 Secret key 不可放进 HTML、源码仓库或日志。示例配置不包含任何真实密钥。
 
@@ -242,8 +368,8 @@ Siteverify 超时为 10 秒，错误时拒绝认证，但不计入密码失败�
 普通表单提交后由新页面生成组件。浏览器必须能访问 `challenges.cloudflare.com`，
 服务端必须能出站访问它的 Siteverify 接口；页面 CSP 已允许所需脚本和 iframe。
 
-验证：`python -m unittest -q test_auth_guard.py test_portal.py test_turnstile.py`。
+验证：`./rdp-auth test`。
 上线时还应使用真实浏览器完成一次登录，并确认重放同一个 Turnstile 令牌被拒绝。
 测试中的模拟响应不代替真实组件的部署验证。
 
-无刷新认证切换的浏览器回归：安装 Python Playwright 和 Chrome 后，在项目目录运行 `python tools/check_tabs.py`。检查使用本地拦截的示例页面与模拟接口，不执行真实授权。
+`./rdp-auth test --browser` 还会运行认证页面无刷新切换的浏览器回归，使用本地拦截的示例页面与模拟接口，不执行真实授权。

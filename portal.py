@@ -382,5 +382,8 @@ def create_app(settings, state_path, authorize_callback=None):
     return app
 
 if os.environ.get('RDP_AUTH_CONFIG'):
-    app = create_app(json.loads(Path(os.environ['RDP_AUTH_CONFIG']).read_text()),
+    runtime_settings = json.loads(Path(os.environ['RDP_AUTH_CONFIG']).read_text())
+    if os.environ.get('RDP_AUTH_WORDLIST'):
+        runtime_settings['wordlist_path'] = os.environ['RDP_AUTH_WORDLIST']
+    app = create_app(runtime_settings,
                      os.environ.get('RDP_AUTH_STATE', '/var/lib/rdp-auth/state.sqlite3'))

@@ -2,13 +2,15 @@
 from pathlib import Path
 from urllib.parse import urlparse,parse_qs
 import json
+import shutil
 from jinja2 import Template
 from playwright.sync_api import sync_playwright, expect
 source=Template((Path(__file__).resolve().parents[1] / 'portal.html').read_text())
 def html(method='password',turnstile=True):
  return source.render(nonce='preview',method=method,manage=False,success=False,csrf='sample',ipv6=False,client_ip='203.0.113.42',turnstile_site_key='test-key' if turnstile else '',message='')
 with sync_playwright() as p:
- browser=p.chromium.launch(executable_path='/usr/bin/google-chrome',args=['--no-sandbox'])
+ chrome=shutil.which('google-chrome')
+ browser=p.chromium.launch(**({'executable_path':chrome} if chrome else {}))
  page=browser.new_page(reduced_motion='reduce');errors=[];posts=[];documents=[]
  page.on('pageerror',lambda e:errors.append(str(e)))
  def route(r):
