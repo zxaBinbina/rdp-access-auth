@@ -101,7 +101,7 @@ class PortalTests(unittest.TestCase):
     def test_ipv6_only_grants_public_ipv4(self):
         self.headers['CF-Connecting-IP']='2606:4700:4700::1111'
         self.assertEqual(self.send('temporary',temporary=self.initial).status_code,400);self.assertEqual(self.temp.current(),self.initial)
-        self.assertEqual(self.send('temporary',temporary=self.initial,ipv4='8.8.8.8').status_code,200);self.assertEqual(self.grants,['8.8.8.8'])
+        self.assertEqual(self.send('temporary',temporary=self.initial,ipv4='8.8.8.8').status_code,400);self.assertEqual(self.grants,[]);self.assertEqual(self.temp.current(),self.initial)
     def test_management_requires_fresh_authentication(self):
         self.assertEqual(self.client.get('/credentials',base_url=self.base,headers=self.headers).status_code,403)
         self.assertEqual(self.api('register/options').status_code,403);self.send()
@@ -202,5 +202,109 @@ class PortalTests(unittest.TestCase):
             self.assertNotEqual(self.temp.rotate(reservation), current)
         finally:
             self.temp.release(reservation)
+
+    def enable_admission(self):
+        self.settings['local_admission'] = {}
+        self.app = create_app(self.settings, self.state, self.grants.append)
+        self.client = self.app.test_client()
+        self.admissions = self.app.extensions['admissions']
+        self.admissions.heartbeat()
+
+    def local_api(self, endpoint, **fields):
+        return self.client.post('/admission/' + endpoint, base_url=self.base, headers=self.headers,
+                                json={'csrf': self.csrf(), **fields})
+
+    def test_existing_ip_skips_form_without_credential_management(self):
+        self.enable_admission()
+        self.admissions.grant('1.1.1.1')
+        expires = self.admissions.get('1.1.1.1')['expires']
+        response = self.client.get('/', base_url=self.base, headers=self.headers)
+        self.assertIn('id="revoke-admission"', response.text)
+        self.assertNotIn('id="auth-form"', response.text)
+        self.assertNotIn(self.initial, response.text)
+        self.assertNotIn('href="/credentials"', response.text)
+        self.assertEqual(self.admissions.get('1.1.1.1')['expires'], expires)
+        self.assertEqual(self.client.get('/credentials', base_url=self.base, headers=self.headers).status_code, 403)
+        self.assertEqual(self.api('register/options').status_code, 403)
+        response = self.client.get('/?reauth=1', base_url=self.base, headers=self.headers)
+        self.assertIn('id="auth-form"', response.text)
+
+    def test_local_revoke_clears_grant_and_session_but_preserves_other_ips(self):
+        self.enable_admission()
+        self.send()
+        self.admissions.grant('8.8.8.8')
+        self.assertEqual(self.local_api('revoke', ipv4='1.1.1.1').status_code, 200)
+        self.assertIsNone(self.admissions.get('1.1.1.1'))
+        self.assertIsNotNone(self.admissions.get('8.8.8.8'))
+        self.assertEqual(self.api('register/options').status_code, 403)
+        self.assertIn('id="auth-form"', self.client.get('/', base_url=self.base, headers=self.headers).text)
+
+    def test_local_revoke_requires_csrf_and_current_ip_even_after_login(self):
+        self.enable_admission()
+        self.admissions.grant('8.8.8.8')
+        self.assertEqual(self.local_api('revoke', ipv4='8.8.8.8').status_code, 403)
+        self.send()
+        self.assertEqual(self.local_api('revoke', ipv4='8.8.8.8').status_code, 403)
+        self.assertEqual(self.local_api('revoke', csrf='bad').status_code, 403)
+        self.assertIsNotNone(self.admissions.get('8.8.8.8'))
+        self.assertIsNotNone(self.admissions.get('1.1.1.1'))
+        self.assertEqual(self.local_api('revoke').status_code, 200)
+        self.assertIsNotNone(self.admissions.get('8.8.8.8'))
+        self.assertIsNone(self.admissions.get('1.1.1.1'))
+
+    def test_ipv6_cannot_select_another_ipv4(self):
+        self.enable_admission()
+        self.headers['CF-Connecting-IP'] = '2606:4700:4700::1111'
+        self.admissions.grant('8.8.8.8')
+        self.assertEqual(self.local_api('status', ipv4='8.8.8.8').status_code, 400)
+        response = self.client.get('/?ipv4=8.8.8.8', base_url=self.base, headers=self.headers)
+        self.assertIn('id="auth-form"', response.text)
+        self.assertIn('2606:4700:4700::1111', response.text)
+        self.assertNotIn('8.8.8.8', response.text)
+        self.assertNotIn('name="ipv4"', response.text)
+        self.assertEqual(self.send(ipv4='8.8.8.8').status_code, 400)
+        self.assertEqual(self.local_api('revoke', ipv4='8.8.8.8').status_code, 403)
+        self.assertIsNotNone(self.admissions.get('8.8.8.8'))
+
+    def test_password_and_passkey_cannot_authorize_forged_ip(self):
+        for method, fields in (('password', {}), ('temporary', {'temporary':self.initial})):
+            self.assertEqual(self.send(method, ipv4='8.8.8.8', **fields).status_code, 400)
+        self.assertEqual(self.grants, [])
+        self.assertEqual(self.temp.current(), self.initial)
+        self.enroll()
+        options = self.api('auth/options').json
+        response = self.api('auth/verify', challenge_id=options['challenge_id'],
+                            credential=self.make_credential(options), ipv4='8.8.8.8')
+        self.assertEqual(response.status_code, 400)
+        self.assertNotIn('8.8.8.8', self.grants)
+
+    def test_query_and_old_session_cannot_select_another_ip(self):
+        self.enable_admission()
+        self.send()
+        self.headers['CF-Connecting-IP'] = '8.8.8.8'
+        response = self.client.get('/?ipv4=1.1.1.1', base_url=self.base, headers=self.headers)
+        self.assertIn('id="auth-form"', response.text)
+        self.assertIn('8.8.8.8', response.text)
+        self.assertEqual(self.local_api('status', ipv4='1.1.1.1').status_code, 400)
+        self.assertFalse(self.local_api('status').json['authorized'])
+        self.assertEqual(self.local_api('revoke', ipv4='1.1.1.1').status_code, 403)
+        self.assertEqual(self.client.get('/authorized', base_url=self.base, headers=self.headers).status_code, 302)
+        self.assertIsNotNone(self.admissions.get('1.1.1.1'))
+
+    def test_gateway_not_ready_never_grants_or_rotates(self):
+        self.enable_admission()
+        with patch.object(self.admissions, 'ready', return_value=False):
+            self.assertEqual(self.send('temporary', temporary=self.initial).status_code, 503)
+        self.assertEqual(self.grants, [])
+        self.assertIsNone(self.admissions.get('1.1.1.1'))
+        self.assertEqual(self.temp.current(), self.initial)
+
+    def test_expired_local_grant_shows_authentication_form(self):
+        self.enable_admission()
+        self.admissions.grant('1.1.1.1')
+        with patch('admission.time.time', return_value=time.time()+21601):
+            self.admissions.heartbeat()
+            response = self.client.get('/', base_url=self.base, headers=self.headers)
+            self.assertIn('id="auth-form"', response.text)
 
 if __name__=='__main__':unittest.main()

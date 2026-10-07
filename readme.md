@@ -197,11 +197,11 @@ sudo apt-get install python3 python3-venv python3-pip dpkg-dev rpm tar gzip
 - 同一 IP 连续失败 5 次封禁 15 分钟；10 分钟内 5 个不同 IP 被封禁，全站锁定 15 分钟。
 - 原生 IP 授权期限为 6 小时，到期后的新连接需重新认证。
 - 保留 CSRF、来源校验、防重放的单次 WebAuthn 挑战、Secure/HttpOnly Cookie 和 no-store 页面策略。
-- 浏览器通过 IPv6 访问时，会检测用于远程桌面连接的公网 IPv4，也支持手动填写。
+- 页面只读展示可信连接头识别的当前 IP，不允许手动填写或通过请求指定其他 IP。当前连接为 IPv6 时提示通过 IPv4 网络打开认证页面。
 
 ## 页面样式
 
-认证入口、授权成功页与凭据管理页沿用个人主页的深蓝灰 / 天蓝配色、柔和光晕、胶囊导航与圆角卡片，导航展示项目图标与 RDP Access Auth 名称，提供太阳 / 月亮主题按钮和项目官网入口。主题默认跟随系统，手动切换后在当前站点记住选择（不同域名的偏好分别保存）。桌面采用左侧连接说明、右侧认证卡片的分栏布局，手机上切为单列；固定密码、临时密码与通行密钥使用胶囊标签在页面内切换，不整页刷新；保留已输入内容和 IPv4，支持浏览器前进 / 后退，未启用 JavaScript 时仍可通过链接切换。切换会更新人机验证的认证方式，并取消未完成的通行密钥请求；错误提示保留在表单上方。授权成功后展示连接地址，凭据管理沿用同一套卡片。项目图标使用去除背景的 PNG，缩小后内嵌页面与标签页，无需外部图片请求。导航、标题、卡片依次入场，主题切换、悬停和详情展开采用短动效；开启减少动态效果时禁用动画与过渡。认证卡片使用与官网演示相同的图标标题、方式标签、带图标输入框、IPv4 摘要和授权按钮；固定密码和临时密码带显示 / 隐藏按钮，临时密码按三个词分格输入，服务端自动连接，无需输入横线，禁用 JavaScript 时也可提交。导航书本图标进入部署文档，房子图标进入项目官网；滚动条采用深浅主题自定义轨道与圆角滑块。保留页面字号与外层布局，精简重复提示。支持手机窄屏和键盘焦点；人机验证在最窄屏幕使用紧凑尺寸。
+认证入口、授权成功页与凭据管理页沿用个人主页的深蓝灰 / 天蓝配色、柔和光晕、胶囊导航与圆角卡片，导航展示项目图标与 RDP Access Auth 名称，提供太阳 / 月亮主题按钮和项目官网入口。主题默认跟随系统，手动切换后在当前站点记住选择（不同域名的偏好分别保存）。桌面采用左侧连接说明、右侧认证卡片的分栏布局，手机上切为单列；固定密码、临时密码与通行密钥使用胶囊标签在页面内切换，不整页刷新；保留已输入的认证内容，支持浏览器前进 / 后退，未启用 JavaScript 时仍可通过链接切换。切换会更新人机验证的认证方式，并取消未完成的通行密钥请求；错误提示保留在表单上方。授权成功后展示连接地址，凭据管理沿用同一套卡片。项目图标使用去除背景的 PNG，缩小后内嵌页面与标签页，无需外部图片请求。导航、标题、卡片依次入场，主题切换、悬停和详情展开采用短动效；开启减少动态效果时禁用动画与过渡。认证卡片使用与官网演示相同的图标标题、方式标签、带图标输入框、当前 IP 只读展示和授权按钮；固定密码和临时密码带显示 / 隐藏按钮，临时密码按三个词分格输入，服务端自动连接，无需输入横线，禁用 JavaScript 时也可提交。导航书本图标进入部署文档，房子图标进入项目官网；滚动条采用深浅主题自定义轨道与圆角滑块。保留页面字号与外层布局，精简重复提示。支持手机窄屏和键盘焦点；人机验证在最窄屏幕使用紧凑尺寸。
 
 样式、主题初始化及页面结构集中在 `portal.html`，无需额外前端构建，也不需要生成 GitHub Release。部署时同步更新 `portal.html` 与 `portal.py`（包含图标所需的 CSP），然后重启认证服务生效；原有认证逻辑与凭据配置不受样式更新影响。
 
@@ -270,7 +270,7 @@ flowchart LR
 
 ```bash
 sudo install -d -m 755 /opt/rdp-access-auth/wordlists /opt/rdp-access-auth/tools /opt/rdp-access-auth/admin_ui /opt/rdp-access-auth/deployment
-sudo install -m 644 portal.py portal.html auth_credentials.py auth_guard.py \
+sudo install -m 644 portal.py portal.html auth_credentials.py auth_guard.py admission.py \
   management.py management_web.py rdp_manager.py package_bootstrap.py deploy.py VERSION \
   requirements.txt requirements-runtime.txt /opt/rdp-access-auth/
 sudo install -m 755 rdp-auth /opt/rdp-access-auth/
@@ -331,7 +331,42 @@ auth_mode = server
 auth_time = 6h
 ```
 
-保存后重启该隧道或 frpc。认证页面会调用 SakuraFrp 的 `/v4/tunnel/auth` 接口，为所填 IPv4 发放准入。固定密码、临时密码和通行密钥共同使用此规则。
+保存后重启该隧道或 frpc。认证页面会调用 SakuraFrp 的 `/v4/tunnel/auth` 接口，为当前连接的 IPv4 发放准入。固定密码、临时密码和通行密钥共同使用此规则。
+
+#### 可选：本机准入网关与取消认证
+
+本机网关支持按 IP 查询、到期失效和取消准入。启用后的连接路径为：
+
+```text
+客户端 → SakuraFrp → frpc → 127.0.0.1:13389（准入网关）→ 127.0.0.1:3389（RDP）
+```
+
+网关只监听本机 IPv4 回环地址，必须与 frpc、RDP 服务运行在同一台机器。frpc 必须传递 PROXY Protocol v1/v2 头；网关验证真实客户端 IP 后移除协议头，再转发 RDP 数据。缺少协议头、未授权、过期或数据库读取失败都会拒绝连接。配置中的 RDP 目标固定为本机，不使用客户端提交的目标地址。
+
+1. 安装包含 `admission.py` 的新版程序。按实际 RDP 端口配置网关（下面以 3389 为例）；旧部署使用 `--profile legacy`，源码本地运行使用默认档案：
+
+   ```bash
+   sudo rdp-auth --profile system config set --admission-listen-port 13389 --admission-target-port 3389 --admission-duration 21600
+   sudo rdp-auth --profile system service restart
+   ```
+
+   对应私有 JSON 配置为 `"local_admission": {"listen_port": 13389, "target_port": 3389, "duration_seconds": 21600}`。省略整个字段表示不开启。网关监听端口、RDP 目标端口和认证网页端口必须不同。网关和门户在同一个进程中启动，保留项目默认的 **一个 Gunicorn worker**；多个线程可正常使用。端口占用会使服务启动失败。
+
+2. 在 SakuraFrp 隧道设置中，把本地地址改为 `127.0.0.1`、本地端口改为 `13389`，并在高级自定义配置中加入：
+
+   ```ini
+   proxy_protocol_version = v2
+   ```
+
+   保留原有 `auth_mode = server` 和 `auth_time`，重新启动该隧道使配置生效。只添加网关而不修改 frpc 的转发目标无法保护原来的直连路径。首次切换会断开此隧道的现有连接，需要重新认证；没有本机授权记录的旧 IP 不会自动放行。
+
+3. 打开认证页完成一次认证。再次访问时，同一已授权 IPv4 会直接显示“取消认证”；取消后拒绝新连接，并在下一次检查时（正常约 250 毫秒）断开该 IP 的现有连接，其他 IP 不受影响。授权记录和期限保存于原状态数据库，重启门户不会延长期限；重新打开已授权页面会恢复可能因 frpc 重启丢失的上游授权缓存，但不延长本机期限。
+
+本机授权期限独立于 SakuraFrp 的缓存期限。即使上游缓存仍有效，取消后的流量也会被本机网关阻止。此功能仅保护经过网关的隧道路径，不管理局域网直接连接 RDP 的权限。固定密码、临时密码和通行密钥仍通过原来的认证接口授权；网关不改变远程桌面账户。
+
+仅凭已授权 IP 不会获得凭据管理权限。绑定新通行密钥仍需使用固定密码认证。授权、状态查询和取消认证仅操作当前连接 IP；页面不提供 IP 输入，服务端拒绝请求中指定的其他 IPv4，也不会使用 URL 参数或旧登录会话选择其他 IP。当前连接为 IPv6 时仅展示该地址，并提示通过 IPv4 网络重新访问，不接受浏览器上报的另一 IPv4。
+
+回退时，先把 frpc 的本地目标恢复为原 RDP 端口并移除 `proxy_protocol_version`，再移除门户配置中的 `local_admission` 并重启门户；保留原有 SakuraFrp 访问认证。配置参考：[SakuraFrp 获取访问者真实 IP](https://doc.natfrp.com/bestpractice/realip.html)。
 
 原 RDP 域名如 `desktop.example.com` 应保持“仅 DNS”。普通 Cloudflare 橙云代理不能直接承载原生 RDP。认证域名通过独立 Cloudflare Tunnel 提供 HTTPS。
 
@@ -348,7 +383,7 @@ auth_time = 6h
 
 绑定新的通行密钥必须先通过固定密码认证；临时密码和通行密钥登录不能绑定新密钥。远程主机管理页的“凭据与访问保护”列出已绑定密钥，可逐个解绑，解绑后无法再用该密钥认证。
 
-浏览器与远程桌面应使用同一公网 IPv4 出口。开代理时，对认证域名、RDP 域名、`api.ipify.org` 和 `ipv4.icanhazip.com` 使用一致的路由策略。
+浏览器与远程桌面应使用同一公网 IPv4 出口。开代理时，认证域名与 RDP 域名应使用一致的 IPv4 路由策略。
 
 ## 维护与排查
 
@@ -407,6 +442,7 @@ deploy.py                       首次部署、下载校验、服务注册与健
 packaging/ / tools/build-package RPM/DEB 打包、应用菜单入口
 auth_credentials.py           临时密码与通行密钥
 auth_guard.py                 封禁、限流和并发控制
+admission.py                  本机 PROXY Protocol 网关与 IP 准入期限
 tools/                        配置初始化、词库构建、本机管理
 deployment/                   systemd 与 Cloudflare Tunnel 模板
 wordlists/sources.json         公开词库来源快照
@@ -438,7 +474,7 @@ Secret key 不可放进 HTML、源码仓库或日志。示例配置不包含任�
 
 服务端要求 `success` 严格为 true、action 匹配且 hostname 等于配置的认证域名；
 生产环境不会接受 localhost。客户端 IP 取自可信本机 Cloudflare Tunnel 的
-`CF-Connecting-IP`，不使用用户填写的 IPv4 做人机校验。
+`CF-Connecting-IP`，不接受用户指定其他 IP。
 Siteverify 超时为 10 秒，错误时拒绝认证，但不计入密码失败次数、不轮换临时密码。
 有效的人机验证不能代替密码或通行密钥。管理页仍使用已认证的短期会话和 CSRF 校验。
 

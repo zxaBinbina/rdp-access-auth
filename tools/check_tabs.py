@@ -29,7 +29,7 @@ with sync_playwright() as p:
    r.fulfill(content_type='text/html',body=html(method),headers={'Content-Security-Policy':"default-src 'none'; img-src data:; style-src 'nonce-preview'; script-src 'nonce-preview' https://challenges.cloudflare.com; connect-src 'self'; form-action 'self'"})
  page.route('**/*',route)
  page.goto('http://127.0.0.1:18125/?method=password');page.wait_for_function('window.actions?.length === 1')
- page.locator('#password').fill('Demo-only-123!');page.locator('details summary').click();page.locator('#ipv4').fill('203.0.113.55')
+ page.locator('#password').fill('Demo-only-123!');expect(page.locator('#current-ip')).to_have_text('203.0.113.42')
  page.evaluate('window.sentinel=123')
  for theme in ['dark','light']:
   page.emulate_media(color_scheme=theme)
@@ -40,7 +40,7 @@ with sync_playwright() as p:
     assert page.locator('[name=method]').input_value()==method
     assert page.evaluate('window.sentinel')==123
     assert page.evaluate('actions.at(-1)')=='login_'+method
-    assert page.locator('#ipv4').input_value()=='203.0.113.55'
+    assert page.locator('#current-ip').inner_text()=='203.0.113.42';assert page.locator('[name=ipv4]').count()==0
     assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
     assert page.locator('.method-panel:not([hidden])').count()==1
  assert len(documents)==1,documents

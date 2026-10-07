@@ -13,7 +13,7 @@ import tarfile
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-APP_FILES = ('portal.py', 'portal.html', 'auth_credentials.py', 'auth_guard.py', 'management.py',
+APP_FILES = ('portal.py', 'portal.html', 'auth_credentials.py', 'auth_guard.py', 'admission.py', 'management.py',
              'management_web.py', 'rdp_manager.py', 'package_bootstrap.py', 'deploy.py', 'VERSION',
              'sakura_config.py', 'installation.py', 'migration.py', 'app_links.py', 'LICENSE', 'AUTHORS',
              'readme.md', 'requirements.txt', 'requirements-runtime.txt')

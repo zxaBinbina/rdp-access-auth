@@ -19,7 +19,7 @@ PACKAGED = (ROOT / 'PACKAGED.json').is_file()
 DATA_ROOT = (Path(os.environ.get('XDG_DATA_HOME') or Path.home() / '.local/share') / 'rdp-access-auth'
              if PACKAGED else ROOT)
 PUBLIC_FIELDS = ('hostname', 'rdp_address', 'tunnel_id', 'turnstile_site_key', 'wordlist_path')
-EDITABLE_FIELDS = set(PUBLIC_FIELDS) | {'password', 'sakura_token', 'turnstile_secret_key', 'disable_turnstile'}
+EDITABLE_FIELDS = set(PUBLIC_FIELDS) | {'password', 'sakura_token', 'turnstile_secret_key', 'disable_turnstile', 'local_admission'}
 
 
 class ManagementError(Exception):
@@ -84,6 +84,7 @@ def read_config(path, missing_ok=False):
 
 def public_config(value):
     return {**{k: value.get(k, '') for k in PUBLIC_FIELDS},
+            'local_admission': value.get('local_admission'),
             'has_password': bool(value.get('password_hash')),
             'has_sakura_token': bool(value.get('sakura_token')),
             'has_turnstile_secret': bool(value.get('turnstile_secret_key'))}
@@ -109,6 +110,11 @@ def rdp_valid(value):
 
 
 def validate_config(value):
+    from admission import configuration
+    try:
+        configuration(value)
+    except ValueError as exc:
+        raise ManagementError('本机准入配置无效：' + str(exc)) from None
     if not hostname_valid(value.get('hostname')):
         raise ManagementError('认证域名应为小写完整域名，不含协议、路径或端口。')
     if not rdp_valid(value.get('rdp_address')):
@@ -203,6 +209,8 @@ def save_config(target, changes, revision=None, create=False):
                     value.pop(key, None)
                 else:
                     value[key] = v
+        if 'local_admission' in changes:
+            value['local_admission'] = changes['local_admission']
         for key in ('sakura_token', 'turnstile_secret_key'):
             if key in changes and changes[key] != '':
                 value[key] = changes[key]

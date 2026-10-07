@@ -76,6 +76,9 @@ def parser():
         edit.add_argument('--rdp-address', help='远程桌面地址，例如 desktop.example.com:3389')
         edit.add_argument('--tunnel-id', type=int, help='SakuraFrp 隧道 ID')
         edit.add_argument('--wordlist-path', help='自定义词库绝对路径；空字符串恢复默认')
+        edit.add_argument('--admission-listen-port', type=port_number, help='启用本机准入网关，frpc 连接此本机端口（默认 13389）')
+        edit.add_argument('--admission-target-port', type=port_number, help='网关转发到的本机 RDP 端口（默认 3389）')
+        edit.add_argument('--admission-duration', type=int, help='本机授权有效秒数，60～86400（默认 21600）')
         if action == 'set':
             edit.add_argument('--password', action='store_true', help='隐藏输入新的固定密码')
             edit.add_argument('--sakura-token', action='store_true', help='隐藏输入新的 SakuraFrp Token')
@@ -120,11 +123,16 @@ def configure(args, target):
         print('配置校验通过；有效词库：' + str(wordlist['count']) + ' 个词。')
         return
     create = args.config_action == 'init'
-    _, revision = read_config(target.config, missing_ok=create)
+    previous, revision = read_config(target.config, missing_ok=create)
     if create and revision != 'missing':
         raise ManagementError('配置已经存在，请使用 config set 修改。')
     changes = {key: getattr(args, key) for key in ('hostname', 'rdp_address', 'tunnel_id', 'wordlist_path')
                if getattr(args, key) is not None}
+    admission_changes = {key: getattr(args, argument) for key, argument in (
+        ('listen_port', 'admission_listen_port'), ('target_port', 'admission_target_port'),
+        ('duration_seconds', 'admission_duration')) if getattr(args, argument) is not None}
+    if admission_changes:
+        changes['local_admission'] = {**(previous.get('local_admission') or {}), **admission_changes}
     if create:
         if not sys.stdin.isatty():
             raise ManagementError('请在交互终端运行 config init，或使用 ./rdp-auth gui 创建配置。')
@@ -152,6 +160,8 @@ def configure(args, target):
         raise ManagementError('请指定要修改的选项。示例：config set --rdp-address desktop.example.com:3389')
     result = save_config(target, changes, revision=revision, create=create)
     print(result['message'] + '\n配置文件：' + str(target.config))
+    if admission_changes:
+        print('本机准入需重启认证服务，并将 frpc 转发目标改到网关端口、启用 proxy_protocol_version = v2。请先核对 RDP 目标端口。')
     if result['hostname_changed']:
         print('认证域名已改变：请同步 Cloudflare Tunnel 配置，并在新域名下重新绑定通行密钥。')
 
@@ -285,6 +295,10 @@ def main(argv=None):
             require_runtime('flask', 'gunicorn', 'webauthn', 'cryptography')
             value, _ = read_config(target.config)
             validate_config(value)
+            from admission import configuration
+            gateway_config = configuration(value)
+            if gateway_config and args.port in (gateway_config['listen_port'], gateway_config['target_port']):
+                raise ManagementError('认证页面、准入网关和 RDP 必须使用不同端口。')
             if os.environ.get('RDP_AUTH_WORDLIST'):
                 value['wordlist_path'] = os.environ['RDP_AUTH_WORDLIST']
             # serve runs this checkout, including its default wordlist, for every profile.

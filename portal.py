@@ -16,6 +16,7 @@ from urllib.parse import urlsplit, urlencode
 from flask import Flask, abort, g, redirect, render_template_string, request, session, jsonify
 from auth_guard import AuthGuard
 from auth_credentials import TemporaryPasswords, Passkeys, password_hash
+from admission import Admissions, configuration as admission_configuration, start_gateway
 
 PAGE = Path(__file__).with_name('portal.html').read_text()
 
@@ -38,6 +39,9 @@ def create_app(settings, state_path, authorize_callback=None):
     temporary = TemporaryPasswords(state_path, settings.get('wordlist_path', str(Path(__file__).parent / 'wordlists/objects.json')), settings['session_key'])
     passkeys = Passkeys(state_path, settings['hostname'], settings['session_key'])
     app.extensions.update(auth_guard=guard, temporary_passwords=temporary, passkeys=passkeys)
+    admission_config = admission_configuration(settings)
+    admissions = Admissions(state_path, admission_config['duration_seconds']) if admission_config else None
+    app.extensions.update(admissions=admissions, admission_config=admission_config)
 
     def client_ip():
         try:
@@ -108,7 +112,7 @@ def create_app(settings, state_path, authorize_callback=None):
         response.headers['Cache-Control'] = 'no-store, max-age=0'
         response.headers['Content-Security-Policy'] = (
             "default-src 'none'; img-src data:; style-src 'nonce-" + g.get('nonce', '') + "'; "
-            "script-src 'nonce-" + g.get('nonce', '') + "' https://challenges.cloudflare.com; connect-src 'self' https://api.ipify.org https://ipv4.icanhazip.com https://challenges.cloudflare.com; "
+            "script-src 'nonce-" + g.get('nonce', '') + "' https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; "
             "frame-src https://challenges.cloudflare.com; "
             "form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
         response.headers['X-Content-Type-Options'] = 'nosniff'
@@ -121,6 +125,10 @@ def create_app(settings, state_path, authorize_callback=None):
         method = request.values.get('method', 'password')
         if method not in ('password', 'temporary', 'passkey'):
             method = 'password'
+        extra.setdefault('local_admission', bool(admissions))
+        extra.setdefault('has_management', has_management())
+        extra.setdefault('revoke_ip', g.get('authorized_ips', [''])[0] if g.get('authorized_ips') else '')
+        extra.setdefault('can_revoke', may_revoke(extra['revoke_ip']))
         return render_template_string(PAGE, nonce=g.nonce, message=message, success=success,
                  method=method, turnstile_site_key=sitekey, **extra,
                  client_ip=g.get('ip', ''), authorized_ips=g.get('authorized_ips', []),
@@ -135,6 +143,8 @@ def create_app(settings, state_path, authorize_callback=None):
 
     @app.get('/healthz')
     def health():
+        if admissions and not admissions.ready():
+            return 'admission gateway unavailable\n', 503
         return 'ok\n'
 
     @app.get('/')
@@ -142,6 +152,20 @@ def create_app(settings, state_path, authorize_callback=None):
         session.permanent = True
         if not session.get('csrf'):
             session['csrf'] = secrets.token_urlsafe(32)
+        target = public_ipv4(g.ip)
+        if admissions and target and request.args.get('reauth') != '1' and admissions.ready() and admissions.get(target):
+            # frpc loses its upstream cache on restart. A still-valid LOCAL grant
+            # may refresh that cache without extending the local grant lifetime.
+            message = ''
+            if guard.options_allowed(g.ip):
+                try:
+                    authorize(target)
+                except Exception:
+                    message = '本机授权仍有效，但隧道授权刷新失败，请稍后重试。'
+            else:
+                message = '隧道授权刷新过于频繁，请稍后重试。'
+            g.authorized_ips = [target]
+            return page(message, success=True)
         return page()
 
     def error(message, status=400, wait=0):
@@ -208,14 +232,56 @@ def create_app(settings, state_path, authorize_callback=None):
         return None
 
     def ipv4_target():
-        raw = fields().get('ipv4', '')
-        try:
-            address = ipaddress.ip_address(raw.strip() or g.ip)
-            if address.version != 4 or not address.is_global:
-                raise ValueError()
-            return str(address)
-        except (ValueError, AttributeError):
+        # Only the trusted loopback connector determines the admission target.
+        # Old clients may still submit ipv4, but cannot select another address.
+        target = public_ipv4(g.ip)
+        raw = fields().get('ipv4')
+        if raw is not None and (not isinstance(raw, str) or public_ipv4(raw.strip()) != target):
             return None
+        return target
+
+    def public_ipv4(raw):
+        try:
+            value = ipaddress.ip_address(raw)
+            return str(value) if value.version == 4 and value.is_global else None
+        except (ValueError, TypeError):
+            return None
+
+    def may_revoke(ip):
+        return bool(ip and ip == g.get('ip'))
+
+    @app.post('/admission/status')
+    def admission_status():
+        if not admissions:
+            return jsonify(enabled=False, authorized=False)
+        target = ipv4_target()
+        if not target:
+            return error('仅支持当前连接的公网 IPv4；请通过 IPv4 网络打开认证页面，不能指定其他 IP。', 400)
+        if not guard.options_allowed(g.ip):
+            return error('查询过于频繁，请稍后重试。', 429, 300)
+        if not admissions.ready():
+            return error('本机准入网关未就绪，请稍后重试。', 503)
+        grant = admissions.get(target)
+        return jsonify(enabled=True, authorized=bool(grant), ipv4=target)
+
+    @app.post('/admission/revoke')
+    def revoke_admission():
+        if not admissions:
+            return error('本机准入控制尚未启用。', 404)
+        target = ipv4_target()
+        if not target or not may_revoke(target):
+            return error('只能取消当前连接 IP 的认证，不能指定其他 IP。', 403)
+        admissions.revoke(target)
+        # Also invalidate this browser's credential-management capability.
+        if session.get('authorized_ip') == target:
+            token = session.get('management', '')
+            with closing(sqlite3.connect(state_path)) as db, db:
+                db.execute('DELETE FROM auth_management WHERE digest=?', (hashlib.sha256(token.encode()).hexdigest(),))
+            session.clear()
+            session['csrf'] = secrets.token_urlsafe(32)
+        if request.is_json:
+            return jsonify(ok=True, redirect='/')
+        return redirect('/', code=303)
 
     def session_hash():
         return hashlib.sha256(session['csrf'].encode()).hexdigest()
@@ -249,8 +315,12 @@ def create_app(settings, state_path, authorize_callback=None):
             wait, scope = guard.locked(g.ip)
             if wait:
                 return locked_response(wait, scope)
+            if admissions and not admissions.ready():
+                return error('本机准入网关未就绪，尚未授权，请稍后重试。', 503)
             try:
                 authorize(target)
+                if admissions:
+                    admissions.grant(target)
             except Exception as exc:
                 app.logger.warning('SakuraFrp authorization failed: type=%s', type(exc).__name__)
                 return error('授权服务暂时不可用，请稍后重试。临时密码未更换。' if temporary_token else '授权服务暂时不可用，请稍后重试。', 502)
@@ -302,7 +372,7 @@ def create_app(settings, state_path, authorize_callback=None):
                     return bad_credentials(attempt, '临时密码不正确或已作废。')
             target = ipv4_target()
             if not target:
-                return error('尚未检测到可用的公网 IPv4。请等待检测完成，或手动填入公网 IPv4。', 400)
+                return error('仅支持当前连接的公网 IPv4；请通过 IPv4 网络打开认证页面，不能指定其他 IP。', 400)
             return admit(target, attempt, reservation, method)
         finally:
             guard.finish(attempt, None)
@@ -311,7 +381,9 @@ def create_app(settings, state_path, authorize_callback=None):
 
     @app.get('/authorized')
     def authorized():
-        if not has_management():
+        if not has_management() or session.get('authorized_ip') != g.ip:
+            return redirect('/')
+        if admissions and (not admissions.ready() or not admissions.get(session['authorized_ip'])):
             return redirect('/')
         g.authorized_ips = [session['authorized_ip']]
         return page(success=True, next_temporary=temporary.current() if session.get('auth_method') == 'temporary' else None)
@@ -383,7 +455,7 @@ def create_app(settings, state_path, authorize_callback=None):
                 return rejected
             target = ipv4_target()
             if not target:
-                return error('请填入远程桌面使用的公网 IPv4。', 400)
+                return error('仅支持当前连接的公网 IPv4；请通过 IPv4 网络打开认证页面，不能指定其他 IP。', 400)
             data = fields()
             try:
                 passkeys.authenticate(data.get('challenge_id', ''), session_hash(), data.get('credential'))
@@ -403,3 +475,5 @@ if os.environ.get('RDP_AUTH_CONFIG'):
         runtime_settings['wordlist_path'] = os.environ['RDP_AUTH_WORDLIST']
     app = create_app(runtime_settings,
                      os.environ.get('RDP_AUTH_STATE', '/var/lib/rdp-auth/state.sqlite3'))
+    if app.extensions['admissions']:
+        app.extensions['admission_thread'] = start_gateway(app.extensions['admissions'], app.extensions['admission_config'])

@@ -170,6 +170,22 @@ class ManagementTests(ManagementFixture):
         path.write_text(json.dumps(['测试' + chr(0x4e00 + i) for i in range(2048)]))
         self.assertEqual(check_wordlist(self.target, value)['count'], 2048)
 
+    def test_local_admission_config_validation_and_cli(self):
+        self.create()
+        before, _ = read_config(self.target.config)
+        result = subprocess.run([str(ROOT / 'rdp-auth'), '--config', str(self.target.config), 'config', 'set',
+                                 '--admission-listen-port', '13389', '--admission-target-port', '3389',
+                                 '--admission-duration', '3600'], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        after, revision = read_config(self.target.config)
+        self.assertEqual(after['local_admission'], dict(listen_port=13389, target_port=3389, duration_seconds=3600))
+        self.assertEqual(after['session_key'], before['session_key'])
+        self.assertEqual(after['password_hash'], before['password_hash'])
+        for value in (True, {'target_port': 13389}, {'listen_port': 80}, {'duration_seconds': 0}):
+            with self.assertRaises(ManagementError):
+                save_config(self.target, {'local_admission': value}, revision=revision)
+        self.assertEqual(read_config(self.target.config)[1], revision)
+
     def test_local_profile_never_contacts_systemd(self):
         with patch('management.subprocess.run') as run:
             self.assertEqual(service_operation(self.target)['LoadState'], 'local')

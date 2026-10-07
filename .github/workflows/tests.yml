@@ -10,3 +10,4 @@ jobs:
           python-version: '3.14'
       - run: python -m pip install -r requirements.txt
       - run: ./rdp-auth test
+      - run: python tools/check_admission_runtime.py
