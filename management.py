@@ -241,19 +241,26 @@ def check_wordlist(target, value):
         return dict(ok=False, path=str(path), message='词库缺失、不可读或不足 2048 个有效中文词。请运行 ./rdp-auth wordlist --download，或配置已有词库的绝对路径。')
 
 
-def state_operation(target, unlock=False):
+def state_operation(target, unlock=False, delete_passkey=None):
     try:
         if not target.state.is_file():
             raise ManagementError('状态数据库尚未生成，或当前用户无权访问其目录。请核对路径和权限；首次启动认证服务后会生成数据库。', 404)
-        uri = target.state.as_uri() + ('?mode=rw' if unlock else '?mode=ro')
+        if delete_passkey is not None and (not isinstance(delete_passkey, str) or not delete_passkey or len(delete_passkey) > 2048):
+            raise ManagementError('请选择要解绑的通行密钥。')
+        uri = target.state.as_uri() + ('?mode=rw' if unlock or delete_passkey is not None else '?mode=ro')
         with closing(sqlite3.connect(uri, uri=True, timeout=5)) as db, db:
-            if unlock:
+            if unlock or delete_passkey is not None:
                 db.execute('BEGIN IMMEDIATE')
+            if delete_passkey is not None:
+                if not db.execute('DELETE FROM passkeys WHERE id=?', (delete_passkey,)).rowcount:
+                    raise ManagementError('该通行密钥已解绑，请刷新列表。', 404)
+            if unlock:
                 db.execute('UPDATE guard_global SET until=0 WHERE id=1')
                 for table in ('guard_ips', 'guard_bans', 'guard_requests', 'guard_options'):
                     db.execute('DELETE FROM ' + table)
             now = int(time.time())
             return dict(passkeys=db.execute('SELECT count(*) FROM passkeys').fetchone()[0],
+                        passkey_list=[dict(id=r[0], name=r[1]) for r in db.execute('SELECT id,name FROM passkeys ORDER BY created,id')],
                         temporary_generation=db.execute('SELECT generation FROM temporary_password WHERE id=1').fetchone()[0],
                         global_lock_seconds=max(0, db.execute('SELECT until FROM guard_global WHERE id=1').fetchone()[0] - now),
                         banned_ips=db.execute('SELECT count(*) FROM guard_ips WHERE until>?', (now,)).fetchone()[0])

@@ -130,6 +130,11 @@ def create_server(target, port=18124, deployment=None, migration=None):
                     result = save_config(target, data.get('changes'), revision=revision, create=revision == 'missing')
                 elif self.path == '/api/unlock':
                     result = dict(state=state_operation(target, unlock=True), message='已解除认证封禁，密码和通行密钥保持不变。')
+                elif self.path == '/api/passkeys/delete':
+                    key_id = data.get('key_id')
+                    if not isinstance(key_id, str) or not key_id:
+                        raise ManagementError('请选择要解绑的通行密钥。')
+                    result = dict(state=state_operation(target, delete_passkey=key_id), message='已解绑通行密钥，该密钥无法再用于认证。')
                 elif self.path == '/api/service':
                     action = data.get('action')
                     if not isinstance(action, str) or action not in ('start', 'stop', 'restart'):

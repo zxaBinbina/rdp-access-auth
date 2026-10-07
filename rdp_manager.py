@@ -317,7 +317,7 @@ def main(argv=None):
                 if importlib.util.find_spec('playwright') is None:
                     raise ManagementError('浏览器测试依赖未安装，请先执行 ./rdp-auth setup --browser。')
                 require_runtime('flask')
-                for script in ('check_management_ui.py', 'check_deploy_ui.py', 'check_migration_ui.py', 'check_tabs.py'):
+                for script in ('check_management_ui.py', 'check_deploy_ui.py', 'check_migration_ui.py', 'check_tabs.py', 'check_credentials_ui.py'):
                     result = subprocess.call([sys.executable, str(ROOT / 'tools' / script)], cwd=ROOT, env=env)
                     if result:
                         return result

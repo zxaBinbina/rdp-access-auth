@@ -154,7 +154,7 @@ class MigrationTests(ManagementFixture):
     def test_sqlite_backup_includes_wal_entries(self):
         with closing(sqlite3.connect(self.target.state)) as db:
             db.execute('PRAGMA journal_mode=WAL')
-            db.execute("INSERT INTO passkeys VALUES ('wal', 'wal-key')")
+            db.execute("INSERT INTO passkeys (id, public_key, name, created) VALUES ('wal', 'wal-key', 'WAL key', 2)")
             db.commit()
             destination = self.root / 'backup.sqlite3'
             sqlite_backup(self.target.state, destination)

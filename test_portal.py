@@ -150,4 +150,57 @@ class PortalTests(unittest.TestCase):
         self.enroll();self.assertEqual(self.api('delete',key_id=b64(self.credential_id)).status_code,303)
         o=self.api('auth/options').json;self.assertEqual(self.api('auth/verify',challenge_id=o['challenge_id'],credential=self.make_credential(o)).status_code,401)
 
+    def regenerate(self, phrase, **extra):
+        return self.client.post('/temporary/regenerate', base_url=self.base, headers=self.headers,
+                                json={'csrf': self.csrf(), 'current_temporary': phrase, **extra})
+
+    def test_registration_requires_fixed_password_at_both_steps(self):
+        self.send('temporary', temporary=self.initial)
+        for path in ('register/options', 'register/verify'):
+            self.assertEqual(self.api(path).status_code, 403)
+        page = self.client.get('/credentials', base_url=self.base, headers=self.headers)
+        self.assertNotIn('id="register-key"', page.text)
+        self.enroll()
+        options = self.api('auth/options').json
+        self.assertEqual(self.api('auth/verify', challenge_id=options['challenge_id'],
+                                 credential=self.make_credential(options)).status_code, 200)
+        for path in ('register/options', 'register/verify'):
+            self.assertEqual(self.api(path).status_code, 403)
+
+    def test_regenerate_requires_temporary_session_csrf_and_freshness(self):
+        self.assertEqual(self.regenerate(self.initial).status_code, 403)
+        self.send()
+        self.assertEqual(self.regenerate(self.initial).status_code, 403)
+        self.send('temporary', temporary=self.initial)
+        current = self.temp.current()
+        self.assertEqual(self.regenerate(current, csrf='bad').status_code, 403)
+        with patch('portal.time.time', return_value=time.time()+601):
+            self.assertEqual(self.regenerate(current).status_code, 403)
+        self.assertEqual(self.temp.current(), current)
+
+    def test_regenerate_invalidates_old_phrase_and_rejects_stale_tabs(self):
+        response = self.send('temporary', temporary=self.initial)
+        self.assertIn('id="regenerate-temporary"', response.text)
+        previous = self.temp.current()
+        response = self.regenerate(previous)
+        self.assertEqual(response.status_code, 200)
+        new = response.json['temporary']
+        self.assertNotEqual(new, previous)
+        self.assertEqual(self.temp.current(), new)
+        self.assertEqual(self.regenerate(previous).status_code, 409)
+        self.assertIsNone(self.temp.reserve(previous))
+        self.assertEqual(len(self.grants), 1)
+        self.assertIn(new, self.client.get('/authorized', base_url=self.base, headers=self.headers).text)
+
+    def test_regenerate_does_not_interrupt_inflight_authentication(self):
+        self.send('temporary', temporary=self.initial)
+        current = self.temp.current()
+        reservation = self.temp.reserve(current)
+        try:
+            self.assertEqual(self.regenerate(current).status_code, 409)
+            self.assertEqual(self.temp.current(), current)
+            self.assertNotEqual(self.temp.rotate(reservation), current)
+        finally:
+            self.temp.release(reservation)
+
 if __name__=='__main__':unittest.main()

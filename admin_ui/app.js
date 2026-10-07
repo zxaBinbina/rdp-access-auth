@@ -142,6 +142,7 @@ function controls() {
   document.querySelectorAll('[data-service]').forEach((button) => { button.disabled = busy || migrationBusy || !serviceAvailable; });
   $('show-logs').disabled = busy || !serviceAvailable;
   $('unlock').disabled = busy || migrationBusy || !current?.state;
+  document.querySelectorAll('[data-delete-passkey]').forEach(button => { button.disabled = busy || migrationBusy; });
 }
 function renderDeployment() {
   if (!current) return;
@@ -175,6 +176,19 @@ function render(value, populate) {
   $('guard-state').textContent = state ? (state.global_lock_seconds ? `锁定 ${state.global_lock_seconds} 秒` : state.banned_ips ? `${state.banned_ips} 个 IP 封禁` : '保护正常') : '尚未就绪';
   $('guard-detail').textContent = state ? '固定密码 / 临时密码 / 通行密钥' : '启动认证服务后生成状态';
   $('passkey-count').textContent = state?.passkeys ?? '—';
+  $('passkey-list').replaceChildren();
+  for (const key of state?.passkey_list || []) {
+    const row = document.createElement('p');
+    const label = document.createElement('span');
+    label.textContent = key.name;
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'secondary button';
+    button.dataset.deletePasskey = key.id;
+    button.textContent = '解绑通行密钥';
+    button.addEventListener('click', () => runAction('/api/passkeys/delete', {key_id:key.id}, '解绑通行密钥', `解绑“${key.name}”后，该密钥将无法认证。重新绑定需使用固定密码认证。`));
+    row.append(label, document.createTextNode(' '), button);
+    $('passkey-list').append(row);
+  }
   $('temporary-generation').textContent = state?.temporary_generation ?? '—';
   $('state-error').textContent = value.state_error || '';
   $('state-error').hidden = !value.state_error;

@@ -739,7 +739,7 @@
               </div>
               <h3>凭据与访问保护</h3>
               <p class="hint">
-                通行密钥绑定与临时密码查看，请在认证入口登录后进入凭据管理页。
+                绑定新通行密钥需先在认证入口使用固定密码认证。可在下方解绑已有密钥。
               </p>
               <div class="credential-stats">
                 <div>
@@ -767,6 +767,7 @@
                   <use href="/icons.svg#lock-open"></use></svg
                 >解除认证封禁
               </button>
+              <div id="passkey-list" aria-live="polite"></div>
               <p id="state-error" class="hint" hidden></p>
             </section>
           </div>

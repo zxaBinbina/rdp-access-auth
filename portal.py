@@ -220,13 +220,14 @@ def create_app(settings, state_path, authorize_callback=None):
     def session_hash():
         return hashlib.sha256(session['csrf'].encode()).hexdigest()
 
-    def start_management(ip):
+    def start_management(ip, method):
         session.clear()
         session.permanent = True
         session['csrf'] = secrets.token_urlsafe(32)
         session['management'] = secrets.token_urlsafe(32)
         session['authorized_ip'] = ip
         session['authorized_at'] = int(time.time())
+        session['auth_method'] = method
         digest = hashlib.sha256(session['management'].encode()).hexdigest()
         with closing(sqlite3.connect(state_path)) as db, db:
             db.execute('DELETE FROM auth_management WHERE expires <= ?', (int(time.time()),))
@@ -240,7 +241,10 @@ def create_app(settings, state_path, authorize_callback=None):
         with closing(sqlite3.connect(state_path)) as db:
             return db.execute('SELECT 1 FROM auth_management WHERE digest=? AND expires>?', (digest, int(time.time()))).fetchone() is not None
 
-    def admit(target, attempt, temporary_token=None):
+    def can_bind():
+        return has_management() and session.get('auth_method') == 'password'
+
+    def admit(target, attempt, temporary_token=None, method='passkey'):
         try:
             wait, scope = guard.locked(g.ip)
             if wait:
@@ -252,7 +256,7 @@ def create_app(settings, state_path, authorize_callback=None):
                 return error('授权服务暂时不可用，请稍后重试。临时密码未更换。' if temporary_token else '授权服务暂时不可用，请稍后重试。', 502)
             next_phrase = temporary.rotate(temporary_token) if temporary_token else None
             guard.finish(attempt, True)
-            start_management(target)
+            start_management(target, method)
             g.authorized_ips = [target]
             if request.is_json:
                 return jsonify(ok=True, redirect='/authorized')
@@ -299,7 +303,7 @@ def create_app(settings, state_path, authorize_callback=None):
             target = ipv4_target()
             if not target:
                 return error('尚未检测到可用的公网 IPv4。请等待检测完成，或手动填入公网 IPv4。', 400)
-            return admit(target, attempt, reservation)
+            return admit(target, attempt, reservation, method)
         finally:
             guard.finish(attempt, None)
             if reservation:
@@ -310,18 +314,30 @@ def create_app(settings, state_path, authorize_callback=None):
         if not has_management():
             return redirect('/')
         g.authorized_ips = [session['authorized_ip']]
-        return page(success=True)
+        return page(success=True, next_temporary=temporary.current() if session.get('auth_method') == 'temporary' else None)
+
+    @app.post('/temporary/regenerate')
+    def regenerate_temporary():
+        if not has_management() or session.get('auth_method') != 'temporary':
+            return error('请先使用临时密码认证，再重新生成下一条密码。', 403)
+        try:
+            phrase = temporary.regenerate(fields().get('current_temporary'))
+        except RuntimeError:
+            return error('临时密码已更新或正在认证中，请刷新页面后重试。', 409)
+        if request.is_json:
+            return jsonify(ok=True, temporary=phrase)
+        return redirect('/authorized', code=303)
 
     @app.get('/credentials')
     def credentials():
         if not has_management():
             return page('请先通过任一种方式认证，再在成功页管理通行密钥或查看临时密码。', status=403)
-        return page(manage=True, keys=passkeys.list(), current_temporary=temporary.current())
+        return page(manage=True, can_bind=can_bind(), keys=passkeys.list(), current_temporary=temporary.current())
 
     @app.post('/passkeys/register/options')
     def registration_options():
-        if not has_management():
-            return error('请先用固定密码或临时密码登录，再绑定通行密钥。', 403)
+        if not can_bind():
+            return error('请先使用固定密码认证，再绑定通行密钥。', 403)
         try:
             return jsonify(passkeys.options('register', session_hash()))
         except ValueError:
@@ -329,8 +345,8 @@ def create_app(settings, state_path, authorize_callback=None):
 
     @app.post('/passkeys/register/verify')
     def registration_verify():
-        if not has_management():
-            return error('管理会话已过期，请重新认证后绑定。', 403)
+        if not can_bind():
+            return error('请先使用固定密码认证，再绑定通行密钥。', 403)
         data = fields()
         try:
             passkeys.register(data.get('challenge_id', ''), session_hash(), data.get('credential'), data.get('name', ''))

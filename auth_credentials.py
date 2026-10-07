@@ -91,6 +91,17 @@ class TemporaryPasswords:
                        (self.encrypt(phrase), salt, password_hash(phrase, salt)))
             return phrase
 
+    def regenerate(self, expected):
+        # Reserving the displayed value prevents stale tabs from invalidating a
+        # newer password and never interrupts an authorization in progress.
+        token = self.reserve(expected)
+        if not token:
+            raise RuntimeError('Temporary password changed')
+        try:
+            return self.rotate(token)
+        finally:
+            self.release(token)
+
 class Passkeys:
     def __init__(self, path, hostname, secret):
         self.path, self.hostname = path, hostname

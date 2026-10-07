@@ -182,8 +182,8 @@ def main():
                         # Unlock a disposable state database through the actual HTTP API.
                         AuthGuard(target.state)
                         with closing(sqlite3.connect(target.state)) as db, db:
-                            db.execute('CREATE TABLE passkeys (id TEXT PRIMARY KEY)')
-                            db.execute("INSERT INTO passkeys VALUES ('keep-passkey')")
+                            db.execute('CREATE TABLE passkeys (id TEXT PRIMARY KEY, name TEXT, created INTEGER)')
+                            db.execute("INSERT INTO passkeys VALUES ('keep-passkey', '测试密钥', 1)")
                             db.execute('CREATE TABLE temporary_password (id INTEGER PRIMARY KEY, generation INTEGER)')
                             db.execute('INSERT INTO temporary_password VALUES (1, 5)')
                             db.execute('UPDATE guard_global SET until=?', (int(time.time()) + 900,))
@@ -194,6 +194,12 @@ def main():
                         expect(page.locator('#guard-state')).to_have_text('保护正常')
                         expect(page.locator('#temporary-generation')).to_have_text('5')
                         expect(page.locator('#passkey-count')).to_have_text('1')
+                        expect(page.locator('#passkey-list')).to_contain_text('测试密钥')
+                        page.locator('[data-delete-passkey]').click()
+                        page.locator('#confirm-ok').click()
+                        expect(page.locator('#passkey-count')).to_have_text('0')
+                        expect(page.locator('#temporary-generation')).to_have_text('5')
+                        expect(page.locator('[data-delete-passkey]')).to_have_count(0)
 
                         # Updating status must not silently replace a stale form revision.
                         save_config(target, {'tunnel_id': 789})

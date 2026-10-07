@@ -38,8 +38,8 @@ class ManagementFixture(unittest.TestCase):
     def make_state(self):
         guard = AuthGuard(self.target.state)
         with closing(sqlite3.connect(self.target.state)) as db, db:
-            db.execute('CREATE TABLE passkeys (id TEXT PRIMARY KEY, public_key TEXT)')
-            db.execute("INSERT INTO passkeys VALUES ('key-1', 'keep-this-key')")
+            db.execute('CREATE TABLE passkeys (id TEXT PRIMARY KEY, public_key TEXT, name TEXT, created INTEGER)')
+            db.execute("INSERT INTO passkeys VALUES ('key-1', 'keep-this-key', '测试密钥', 1)")
             db.execute('CREATE TABLE temporary_password (id INTEGER PRIMARY KEY, generation INTEGER, ciphertext TEXT)')
             db.execute("INSERT INTO temporary_password VALUES (1, 7, 'keep-encrypted-password')")
             db.execute('UPDATE guard_global SET until=?', (int(time.time()) + 900,))
@@ -300,6 +300,20 @@ class ManagementHTTPTests(ManagementFixture):
         _, body, _ = self.request()
         self.assertNotIn(self.fields['sakura_token'], body)
         self.assertNotIn('saved-secret', body)
+
+    def test_web_unbind_requires_admin_and_preserves_other_credentials(self):
+        self.make_state()
+        self.assertEqual(self.request('POST', '/api/passkeys/delete', {'key_id':'key-1'}, authenticated=False)[0], 401)
+        self.assertEqual(self.request('POST', '/api/passkeys/delete', {'key_id':'key-1'}, {'Origin':'https://evil.example'})[0], 403)
+        self.assertEqual(self.request('POST', '/api/passkeys/delete', {})[0], 400)
+        before = state_operation(self.target)
+        self.assertEqual(before['passkey_list'], [{'id':'key-1', 'name':'测试密钥'}])
+        self.assertEqual(self.request('POST', '/api/passkeys/delete', {'key_id':'key-1'})[0], 200)
+        after = state_operation(self.target)
+        self.assertEqual(after['passkeys'], 0)
+        self.assertEqual(after['temporary_generation'], before['temporary_generation'])
+        self.assertEqual(after['banned_ips'], before['banned_ips'])
+        self.assertEqual(self.request('POST', '/api/passkeys/delete', {'key_id':'key-1'})[0], 404)
 
     def test_web_unlock_real_database(self):
         self.make_state()
