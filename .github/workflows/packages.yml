@@ -3,36 +3,66 @@ on:
   workflow_dispatch:
   push:
     tags: ['v*']
+    branches: ['codex/2.0-desktop']
 permissions:
   contents: read
 jobs:
   rpm:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container: fedora:44
     steps:
-      - run: dnf install -y git python3 python3-pip rpm-build cpio findutils tar gzip
+      - run: >-
+          dnf install -y git python3 python3-pip rpm-build cpio findutils tar gzip patch
+          cmake ninja-build gcc-c++ extra-cmake-modules qt6-qtbase-devel
+          qt6-qtbase-private-devel qt6-qtdeclarative-devel qt6-qtwayland-devel
+          kf6-kcoreaddons-devel kf6-kguiaddons-devel kf6-kconfig-devel
+          freerdp-devel libwinpr-devel kpipewire-devel pipewire-devel
+          plasma-wayland-protocols pam-devel libdrm-devel mesa-libgbm-devel wayland-devel
       - uses: actions/checkout@v4
+      - run: python3 tools/build-krdp-fix.py --jobs 2
       - run: tools/build-package rpm
       - run: .build/package-venv/bin/python -m unittest discover -q
       - run: .build/package-venv/bin/python tools/check_package.py dist/*.rpm
       - run: dnf install -y ./dist/*.rpm
       - run: rdp-auth --help && rdp-auth setup && rdp-auth deploy --dry-run
+      - run: rpm -e rdp-access-auth
       - uses: actions/upload-artifact@v4
         with:
           name: rdp-access-auth-fedora44-x86_64
           path: dist/*
-  deb:
-    runs-on: ubuntu-latest
-    container: ubuntu:24.04
+  ubuntu:
+    runs-on: ubuntu-24.04
     steps:
-      - run: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y git python3 python3-venv python3-pip dpkg-dev
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y python3-venv python3-pip dpkg-dev
+      - run: tools/build-package deb
+      - run: .build/package-venv/bin/python -m unittest discover -q
+      - run: .build/package-venv/bin/python tools/check_package.py dist/*.deb
+      - run: sudo apt-get install -y ./dist/*.deb
+      - run: rdp-auth --help && rdp-auth setup && rdp-auth deploy --dry-run
+      - run: python3 -m venv --system-site-packages .build/ui-venv && .build/ui-venv/bin/pip install playwright
+      - run: .build/ui-venv/bin/python tools/check_desktop_ui.py --app-root /usr/lib/rdp-access-auth
+      - run: sudo apt-get remove -y rdp-access-auth
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rdp-access-auth-ubuntu24.04-amd64
+          path: |
+            dist/*
+            .build/desktop-check/*
+  debian:
+    runs-on: ubuntu-24.04
+    container: debian:13
+    steps:
+      - run: apt-get update && apt-get install -y git python3 python3-venv python3-pip dpkg-dev
       - uses: actions/checkout@v4
       - run: tools/build-package deb
       - run: .build/package-venv/bin/python -m unittest discover -q
       - run: .build/package-venv/bin/python tools/check_package.py dist/*.deb
       - run: apt-get install -y ./dist/*.deb
       - run: rdp-auth --help && rdp-auth setup && rdp-auth deploy --dry-run
+      - run: apt-get remove -y rdp-access-auth
       - uses: actions/upload-artifact@v4
         with:
-          name: rdp-access-auth-ubuntu24.04-amd64
+          name: rdp-access-auth-debian13-amd64
           path: dist/*

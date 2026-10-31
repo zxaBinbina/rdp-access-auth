@@ -2,11 +2,11 @@
 Type=Application
 Name=RDP Access Auth
 Name[zh_CN]=RDP Access Auth
-Comment=Configure and deploy the RDP authentication portal
-Comment[zh_CN]=自动检测、管理和迁移远程桌面认证服务
+Comment=Manage RDP authentication, tunnels and Agent access
+Comment[zh_CN]=配置远程桌面认证、隧道与 Agent 授权
 Exec=rdp-auth launch %u
 MimeType=x-scheme-handler/rdp-auth;
 Icon=rdp-access-auth
-Terminal=true
+Terminal=false
 Categories=Network;RemoteAccess;
 Keywords=RDP;Authentication;SakuraFrp;Cloudflare;

@@ -17,8 +17,13 @@ APP_FILES = ('portal.py', 'portal.html', 'auth_credentials.py', 'auth_guard.py',
              'management_web.py', 'rdp_manager.py', 'package_bootstrap.py', 'deploy.py', 'VERSION',
              'sakura_config.py', 'installation.py', 'migration.py', 'app_links.py', 'LICENSE', 'AUTHORS',
              'readme.md', 'requirements.txt', 'requirements-runtime.txt')
-REMOVE_SERVICES = '''if [ -f /etc/rdp-access-auth/deployment.json ] && command -v systemctl >/dev/null 2>&1; then
-    systemctl disable --now cloudflared-rdp-access.service rdp-access-auth.service >/dev/null 2>&1 || :
+REMOVE_SERVICES = '''if command -v systemctl >/dev/null 2>&1; then
+    systemctl disable --now rdp-access-auth-control.socket >/dev/null 2>&1 || :
+    systemctl stop rdp-access-auth-control.service >/dev/null 2>&1 || :
+fi
+rm -f /etc/systemd/user/app-org.kde.krdpserver.service.d/90-rdp-access-auth-repair.conf
+if [ -f /etc/rdp-access-auth/deployment.json ] && command -v systemctl >/dev/null 2>&1; then
+    systemctl disable --now cloudflared-rdp-access.service rdp-access-auth.service rdp-access-auth-frpc.service >/dev/null 2>&1 || :
 fi
 for unit in rdp-auth.service rdp-access-auth.service; do
     if [ -f "/etc/systemd/system/$unit.d/90-rdp-access-auth-package.conf" ]; then
@@ -33,12 +38,20 @@ def stage_tree(destination):
     app.mkdir(parents=True)
     for name in APP_FILES:
         shutil.copyfile(ROOT / name, app / name)
-    for name in ('admin_ui',):
-        shutil.copytree(ROOT / name, app / name)
+    for name in ('admin_ui', 'desktop', 'desktop_ui', 'docs', 'third_party/krdp'):
+        shutil.copytree(ROOT / name, app / name, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
     for name in ('tools/build_wordlist.py', 'tools/preview.py', 'wordlists/sources.json', 'wordlists/readme.md',
-                 'deployment/cloudflared-downloads.json'):
+                 'deployment/cloudflared-downloads.json', 'deployment/frpc-downloads.json'):
         (app / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / name, app / name)
+    if platform.freedesktop_os_release().get('ID') == 'fedora' and platform.machine() == 'x86_64':
+        repair = ROOT / '.build/krdp-fix'
+        if not (repair / 'build-info.json').exists():
+            raise RuntimeError('先运行 python3 tools/build-krdp-fix.py 构建并验证 KDE 修复。')
+        (app / 'krdp-fix').mkdir()
+        for name in ('libKRdp.so.6.7.5', 'build-info.json'):
+            shutil.copyfile(repair / name, app / 'krdp-fix' / name)
+        (app / 'krdp-fix/libKRdp.so.6').symlink_to('libKRdp.so.6.7.5')
     licenses = destination / 'usr/share/licenses/rdp-access-auth'
     licenses.mkdir(parents=True)
     shutil.copyfile(ROOT / 'LICENSE', licenses / 'LICENSE')
@@ -89,6 +102,13 @@ def stage_tree(destination):
         output.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / 'packaging' / source, output)
         output.chmod(mode)
+    for source, target in (
+            ('rdp-access-auth-control.socket', 'usr/lib/systemd/system/rdp-access-auth-control.socket'),
+            ('rdp-access-auth-control.service', 'usr/lib/systemd/system/rdp-access-auth-control.service'),
+            ('rdp-access-auth-autostart.desktop', 'etc/xdg/autostart/rdp-access-auth.desktop')):
+        path = destination / target
+        path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / 'packaging' / source, path)
     # No configuration, credentials, database, wordlist data or enable-on-install script is packaged.
     for path in destination.rglob('*'):
         if path.is_dir():
@@ -109,9 +129,9 @@ Priority: optional
 Architecture: {architecture}
 Maintainer: a彬彬a <zxabinbina@mcyzw.top>
 Homepage: https://github.com/zxaBinbina/rdp-access-auth
-Depends: python3 (>= 3.{minor}), python3 (<< 3.{minor + 1}), libc6 (>= 2.34), libgcc-s1, systemd (>= 249), sudo
+Depends: python3 (>= 3.{minor}), python3 (<< 3.{minor + 1}), libc6 (>= 2.34), libgcc-s1, systemd (>= 249), sudo, pkexec, python3-pyqt6, python3-pyqt6.qtwebengine
 Recommends: xdg-utils, x-terminal-emulator, desktop-file-utils
-Description: Browser and command-line setup for RDP access authentication
+Description: Native desktop manager for RDP authentication and tunnels
  Includes runtime Python libraries and an interactive deployment wizard.
  Credentials and services are created only when the user runs the wizard.
 ''')
@@ -125,12 +145,13 @@ Description: Browser and command-line setup for RDP access authentication
 def build_rpm(tree, output, version, work):
     minor = sys.version_info.minor
     libraries = json.loads((tree / 'usr/lib/rdp-access-auth/THIRD_PARTY.json').read_text())
-    license_expression = ' AND '.join(sorted({'MIT', 'ISC', *(f'({item["license"]})' if ' OR ' in item['license'] else item['license'] for item in libraries)}))
+    license_expression = ' AND '.join(sorted({'MIT', 'ISC', 'LGPL-2.0-or-later', *(f'({item["license"]})' if ' OR ' in item['license'] else item['license'] for item in libraries)}))
     bundled = '\n'.join(f'Provides: bundled(python3dist({item["name"].lower().replace("_", "-")})) = {item["version"]}' for item in libraries)
     for folder in ('SOURCES', 'SPECS', 'BUILD', 'BUILDROOT', 'RPMS', 'SRPMS'):
         (work / folder).mkdir()
     with tarfile.open(work / 'SOURCES/app.tar.gz', 'w:gz') as archive:
         archive.add(tree / 'usr', arcname='usr')
+        archive.add(tree / 'etc', arcname='etc')
     spec = work / 'SPECS/rdp-access-auth.spec'
     spec.write_text(f'''%global debug_package %{{nil}}
 %global __os_install_post %{{nil}}
@@ -150,6 +171,9 @@ Requires: python3
 Requires: python(abi) = 3.{minor}
 Requires: systemd >= 249
 Requires: sudo
+Requires: polkit
+Requires: python3-pyside6
+Requires: qt6-qtwebengine
 Recommends: xdg-utils
 Recommends: desktop-file-utils
 
@@ -167,7 +191,7 @@ tar -xzf %{{SOURCE0}}
 
 %install
 mkdir -p %{{buildroot}}
-cp -a usr %{{buildroot}}/
+cp -a usr etc %{{buildroot}}/
 
 %preun
 if [ "$1" -eq 0 ]; then
@@ -176,6 +200,9 @@ if [ "$1" -eq 0 ]; then
 %files
 %defattr(-,root,root,-)
 /usr/bin/rdp-auth
+/etc/xdg/autostart/rdp-access-auth.desktop
+/usr/lib/systemd/system/rdp-access-auth-control.service
+/usr/lib/systemd/system/rdp-access-auth-control.socket
 /usr/lib/rdp-access-auth
 /usr/share/applications/rdp-access-auth.desktop
 /usr/share/icons/hicolor/512x512/apps/rdp-access-auth.png

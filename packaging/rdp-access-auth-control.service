@@ -1,0 +1,21 @@
+[Unit]
+Description=RDP Access Auth privileged local controller
+Requires=rdp-access-auth-control.socket
+After=rdp-access-auth-control.socket
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/rdp-auth desktop-control
+WorkingDirectory=/usr/lib/rdp-access-auth
+Environment=PYTHONDONTWRITEBYTECODE=1
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=read-only
+ProtectSystem=full
+ReadWritePaths=/etc /usr/local
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+TimeoutStopSec=15

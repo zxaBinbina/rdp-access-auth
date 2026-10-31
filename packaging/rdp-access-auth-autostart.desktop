@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=RDP Access Auth
+Comment=Apply saved startup preferences and handle local approval requests
+Exec=rdp-auth desktop-login
+Icon=rdp-access-auth
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN" data-context="desktop">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' qrc:; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>RDP Access Auth</title>
+  <script src="theme.js"></script>
+  <link rel="stylesheet" href="theme.css">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <div id="app"><main class="loading"><img src="logo.png" alt="" width="72" height="72"><h1>RDP Access Auth</h1><p>正在连接本机管理服务…</p></main></div>
+  <dialog id="dialog" aria-labelledby="dialog-title"></dialog>
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

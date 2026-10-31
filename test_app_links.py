@@ -21,20 +21,16 @@ class AppLinksTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ManagementError):
                 parse_app_link(value)
 
-    def test_migration_link_opens_page_without_starting_migration(self):
-        target = select_target('legacy')
-        with patch('deploy.elevate_if_needed'), patch('installation.installed_targets', return_value=[target]), \
-             patch('management_web.run_gui') as gui, patch('migration.Migration.start') as migrate:
+    def test_migration_link_opens_native_page_without_starting_migration(self):
+        with patch('desktop.app.run', return_value=0) as window, patch('migration.Migration.start') as migrate:
             self.assertEqual(main(['launch', 'rdp-auth://migrate?profile=legacy']), 0)
-            gui.assert_called_once_with(target, 18124, True, view='migrate', fallback_port=True)
+            window.assert_called_once_with('maintenance', background=False)
             migrate.assert_not_called()
 
-    def test_link_on_fresh_host_opens_first_deployment(self):
-        with patch('deploy.elevate_if_needed'), patch('installation.installed_targets', return_value=[]), \
-             patch('deploy.run_wizard') as wizard, patch('management_web.run_gui') as gui:
+    def test_management_link_opens_native_window(self):
+        with patch('desktop.app.run', return_value=0) as window:
             self.assertEqual(main(['launch', 'rdp-auth://manage?profile=legacy']), 0)
-            wizard.assert_called_once_with(True, 18124, False)
-            gui.assert_not_called()
+            window.assert_called_once_with('settings', background=False)
 
 
 if __name__ == '__main__':

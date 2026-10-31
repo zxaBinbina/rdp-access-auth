@@ -213,18 +213,11 @@ class DetectionTests(ManagementFixture):
         selected = preferred_target(targets, lambda t: dict(ActiveState='active' if t.profile == 'legacy' else 'inactive'))
         self.assertEqual(selected.profile, 'legacy')
 
-    def test_launcher_routes_fresh_and_existing_hosts(self):
+    def test_launcher_uses_native_window(self):
         import rdp_manager
-        for profile in (None, 'legacy', 'system'):
-            target = Target(self.root/'config', self.root/'state', 'fixture.service', self.root, profile) if profile else None
-            with patch('deploy.elevate_if_needed'), patch('installation.installed_targets', return_value=[target] if target else []), patch('management_web.run_gui') as gui, patch('deploy.run_wizard') as deploy:
-                self.assertEqual(rdp_manager.main(['launch', '--no-open']), 0)
-                if target:
-                    gui.assert_called_once_with(target, 18124, False, view='open', fallback_port=True)
-                    deploy.assert_not_called()
-                else:
-                    deploy.assert_called_once_with(True, 18124, True)
-                    gui.assert_not_called()
+        with patch('desktop.app.run', return_value=0) as window:
+            self.assertEqual(rdp_manager.main(['launch']), 0)
+            window.assert_called_once_with('open', background=False)
 
 
 if __name__ == '__main__':

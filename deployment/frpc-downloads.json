@@ -1,0 +1,14 @@
+{
+  "version": "0.51.0-sakura-15.1",
+  "source": "https://api.natfrp.com/v4/system/clients",
+  "x86_64": {
+    "url": "https://nya.globalslb.net/natfrp/client/frpc/0.51.0-sakura-15.1/frpc_linux_amd64",
+    "sha256": "f4d07fca61c9a048e17cb171597f49171ce55b1a8bc2e0ab4e2b4d86c444f402",
+    "size": 7051212
+  },
+  "aarch64": {
+    "url": "https://nya.globalslb.net/natfrp/client/frpc/0.51.0-sakura-15.1/frpc_linux_arm64",
+    "sha256": "1d93ec62b4fc46af3fc082b3f794bf09b5e1cbb41524ee5adb967b64236d9de0",
+    "size": 6267348
+  }
+}

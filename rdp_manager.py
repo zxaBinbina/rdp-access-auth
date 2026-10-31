@@ -20,7 +20,7 @@ def output(value):
 
 def secret(prompt):
     if not sys.stdin.isatty():
-        raise ManagementError('敏感信息需要在交互终端中隐藏输入，或使用浏览器管理页填写。')
+        raise ManagementError('敏感信息需要在交互终端中隐藏输入，或使用桌面窗口填写。')
     return getpass.getpass(prompt)
 
 
@@ -42,28 +42,36 @@ def port_number(value):
 
 
 def parser():
-    p = argparse.ArgumentParser(prog='./rdp-auth', description='RDP Access Auth 命令行与浏览器管理工具',
+    p = argparse.ArgumentParser(prog='./rdp-auth', description='RDP Access Auth 原生桌面与命令行管理工具',
         epilog='默认只管理项目内的 private/ 配置。全局路径参数放在子命令前，例如：./rdp-auth --profile local gui')
-    p.add_argument('--profile', choices=['local', 'system', 'legacy'], default='local',
+    p.add_argument('--profile', choices=['local', 'system', 'legacy'], default='system' if PACKAGED else 'local',
                    help='local=当前项目（默认）；system=标准部署；legacy=旧版部署')
     p.add_argument('--config', type=Path, help='指定配置文件的路径')
     p.add_argument('--state', type=Path, help='指定状态数据库的路径')
     p.add_argument('--service', help='指定 systemd 服务名（以 .service 结尾）')
     p.add_argument('--scope', choices=['system', 'user'], default='system', help='systemd 服务范围')
     sub = p.add_subparsers(dest='command')
+    sub.add_parser('desktop-control', help=argparse.SUPPRESS)
+    sub.add_parser('desktop-bootstrap', help=argparse.SUPPRESS)
+    sub.add_parser('desktop-login', help='登录桌面时按已保存偏好启动')
+    mcp = sub.add_parser('mcp', help='通过 stdio 提供本机 MCP 接口')
+    mcp.add_argument('--identity', required=True, type=Path)
+    approve = sub.add_parser('approve', help='在独立终端批准 Agent 请求')
+    approve.add_argument('request_id')
+    approve.add_argument('--deny', action='store_true')
     launch = sub.add_parser('launch', help='自动检查本机部署，打开管理页或首次部署向导')
     launch.add_argument('url', nargs='?', help='教程链接，例如 rdp-auth://migrate?profile=legacy')
-    launch.add_argument('--port', type=port_number, default=18124, help='浏览器管理端口')
-    launch.add_argument('--no-open', action='store_true', help='只显示完整链接')
+    launch.add_argument('--port', type=port_number, default=18124, help=argparse.SUPPRESS)
+    launch.add_argument('--no-open', action='store_true', help=argparse.SUPPRESS)
     migrate = sub.add_parser('migrate', help='将已有服务迁移为使用 RPM/DEB 中的程序')
     migrate.add_argument('--dry-run', action='store_true', help='仅检查并展示迁移计划')
     migrate.add_argument('--recover', action='store_true', help='恢复被中断的迁移')
     deploy = sub.add_parser('deploy', help='首次部署向导：浏览器表单或终端交互（需要安装 RPM/DEB）')
-    deploy.add_argument('--gui', action='store_true', help='在浏览器中运行部署向导')
+    deploy.add_argument('--gui', action='store_true', help='打开原生欢迎向导')
     deploy.add_argument('--dry-run', action='store_true', help='只展示部署位置和冲突，不修改系统、不询问凭据')
     deploy.add_argument('--port', type=port_number, default=18124, help='浏览器向导监听端口')
     deploy.add_argument('--no-open', action='store_true', help='仅打印浏览器向导链接')
-    gui = sub.add_parser('gui', help='启动浏览器配置界面（无需安装依赖）')
+    gui = sub.add_parser('gui', help='打开原生 WebView 配置窗口')
     gui.add_argument('--port', type=port_number, default=18124, help='本机管理端口，默认 18124')
     gui.add_argument('--no-open', action='store_true', help='只显示链接，不自动打开浏览器')
     setup = sub.add_parser('setup', help='在项目 .venv 中安装认证服务依赖')
@@ -170,35 +178,46 @@ def main(argv=None):
     p = parser()
     args = p.parse_args(argv)
     if args.command is None:
-        p.print_help()
-        return 0
+        args.command = 'gui'
+        args.no_open = False
     try:
         target = select_target(args.profile, args.config, args.state, args.service, args.scope)
-        if args.command == 'launch':
-            from installation import installed_targets, preferred_target
-            from deploy import elevate_if_needed, run_wizard
-            from management_web import run_gui
+        if args.command in ('launch', 'gui', 'desktop-login'):
+            from desktop.app import run
             from app_links import parse_app_link
-            link = parse_app_link(args.url) if args.url else dict(view='open', profile='auto')
-            if link['profile'] != 'auto':
-                if args.profile != 'local' and args.profile != link['profile']:
-                    raise ManagementError('命令参数和链接指定的管理目标不一致。')
-                args.profile = link['profile']
-            if args.config or args.state or args.service or args.scope != 'system':
-                raise ManagementError('自动入口不接受自定义路径；请使用 gui 管理自定义部署。')
-            elevate_if_needed(['--profile', args.profile, 'launch', '--port', str(args.port)] +
-                              (['--no-open'] if args.no_open else []) + ([args.url] if args.url else []))
-            targets = installed_targets()
-            if targets and args.profile != 'local':
-                target = next((item for item in targets if item.profile == args.profile), None)
-                if target is None:
-                    raise ManagementError('未检测到链接或命令指定的部署档案。请使用 rdp-auth launch 自动选择。')
-            else:
-                target = preferred_target(targets, service_operation)
-            if target:
-                run_gui(target, args.port, not args.no_open, view=link['view'], fallback_port=True)
-            else:
-                run_wizard(True, args.port, args.no_open)
+            view = 'open'
+            if getattr(args, 'url', None):
+                view = parse_app_link(args.url)['view']
+                view = {'migrate': 'maintenance', 'logs': 'maintenance', 'manage': 'settings', 'deploy': 'wizard'}.get(view, view)
+            if args.config or args.state or args.service:
+                raise ManagementError('桌面窗口管理本机安装；自定义开发配置请使用命令行。')
+            return run(view, background=args.command == 'desktop-login')
+        elif args.command == 'desktop-control':
+            from desktop.control import serve
+            serve()
+        elif args.command == 'desktop-bootstrap':
+            from desktop.control import bootstrap
+            raw = sys.stdin.read(4097)
+            if len(raw) > 4096:
+                raise ManagementError('初始化数据过大。')
+            output(bootstrap(json.loads(raw).get('password')))
+        elif args.command == 'mcp':
+            from desktop.mcp import serve
+            return serve(args.identity)
+        elif args.command == 'approve':
+            from desktop.control import Client
+            client = Client()
+            password = secret('管理密码：')
+            session = client.request('security.login', {'password': password})['session']
+            try:
+                request = next((item for item in client.request('agents.list', session=session)['pending'] if item['id'] == args.request_id), None)
+                if not request:
+                    raise ManagementError('申请不存在或已过期。')
+                output(request)
+                allow = not args.deny and input('批准上面这一项申请？[y/N]：').lower() in ('y', 'yes')
+                output(client.request('agents.approve', {'request_id': args.request_id, 'allow': allow, 'password': password}, session=session))
+            finally:
+                client.request('security.logout', session=session)
         elif args.command == 'migrate':
             from installation import installed_targets, preferred_target
             from migration import Migration
@@ -240,16 +259,12 @@ def main(argv=None):
             finally:
                 migration.close()
         elif args.command == 'deploy':
-            from deploy import deployment_plan, run_wizard
             if args.dry_run:
+                from deploy import deployment_plan
                 output(deployment_plan())
             else:
-                if args.profile != 'local' or args.config or args.state or args.service or args.scope != 'system':
-                    raise ManagementError('首次部署使用固定系统路径，不接受管理目标参数；可用 deploy --dry-run 查看。')
-                run_wizard(args.gui, args.port, args.no_open)
-        elif args.command == 'gui':
-            from management_web import run_gui
-            run_gui(target, args.port, not args.no_open)
+                from desktop.app import run
+                return run('wizard')
         elif args.command == 'config':
             configure(args, target)
         elif args.command == 'status':

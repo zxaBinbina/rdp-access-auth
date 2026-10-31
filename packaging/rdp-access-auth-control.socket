@@ -1,0 +1,10 @@
+[Unit]
+Description=RDP Access Auth local management socket
+
+[Socket]
+ListenStream=/run/rdp-access-auth-control.sock
+SocketMode=0666
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

@@ -48,7 +48,14 @@ def main():
         assert (root / 'usr/share/metainfo/cc.cd.zxabinbina.RDPAccessAuth.metainfo.xml').is_file()
         marker = json.loads((app / 'PACKAGED.json').read_text())
         assert marker['python'] == f'{sys.version_info.major}.{sys.version_info.minor}', marker
-        assert not (root / 'etc').exists(), 'The package must not ship user configuration'
+        assert not (root / 'etc/rdp-access-auth').exists(), 'The package must not ship user credentials'
+        assert not (root / 'etc/rdp-access-auth-control').exists()
+        assert 'Terminal=false' in desktop
+        assert (root / 'etc/xdg/autostart/rdp-access-auth.desktop').exists()
+        assert (root / 'usr/lib/systemd/system/rdp-access-auth-control.socket').exists()
+        for asset in ('index.html', 'app.js', 'theme.css', 'app.css'):
+            assert (app / 'desktop_ui' / asset).exists()
+        assert (app / 'desktop/mcp.py').exists()
         env = dict(os.environ, XDG_DATA_HOME=str(root / 'data'), PYTHONPATH='', PYTHONNOUSERSITE='1')
         env.pop('RDP_AUTH_CONFIG', None)
         env.pop('RDP_AUTH_STATE', None)
