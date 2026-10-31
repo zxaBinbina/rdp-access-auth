@@ -99,7 +99,7 @@ def parser():
     status.add_argument('--json', action='store_true', help='输出 JSON，供脚本读取')
     sub.add_parser('unlock', help='解除认证封禁，保留凭据')
     service = sub.add_parser('service', help='管理选定的 systemd 服务')
-    service.add_argument('action', choices=['status', 'start', 'stop', 'restart', 'logs'])
+    service.add_argument('action', choices=['status', 'start', 'stop', 'pause', 'resume', 'restart', 'logs'])
     words = sub.add_parser('wordlist', help='构建中文词库')
     words.add_argument('--download', action='store_true', help='下载词库来源')
     words.add_argument('--refresh-sources', action='store_true', help='接受并记录上游来源更新')

@@ -183,6 +183,15 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(self.controller.provisioner.vault['sakura_api_token'], 'working-fixture')
         self.assertNotIn('bad-fixture', self.controller.provisioner.vault_path.read_text())
 
+    def test_connector_runtime_token_is_removed_from_logs(self):
+        path = self.root / 'etc/rdp-access-auth/frpc.ini'
+        path.parent.mkdir(parents=True)
+        path.write_text(FRPC)
+        self.controller.services.runner = lambda args: 'server rejected token fixture-secret'
+        result = self.call('logs.read', {'service': 'frpc'})
+        self.assertNotIn('fixture-secret', result['output'])
+        self.assertIn('[已隐藏]', result['output'])
+
     def test_revoked_agent_cannot_continue_background_deployment(self):
         ready = self.setup_plan()
         identity = self.controller.authority.register('Fixture')

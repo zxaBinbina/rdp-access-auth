@@ -133,6 +133,9 @@ def run(view='open', background=False, socket_path=SOCKET_PATH):
                     self.ready.emit()
                     value = initial
                 elif method == 'ui.bootstrap':
+                    password = params.get('password')
+                    if not isinstance(password, str) or not 12 <= len(password) <= 128:
+                        raise ManagementError('管理密码需要 12～128 个字符。')
                     payload = json.dumps({'password': params.get('password')})
                     process = subprocess.run(['pkexec', '/usr/bin/rdp-auth', 'desktop-bootstrap'], input=payload,
                                              capture_output=True, text=True, timeout=180)

@@ -125,7 +125,18 @@ class Provisioner:
             return json.loads(json.dumps(result))
 
     def secrets(self):
-        return [self.vault.get(key, '') for key in SENSITIVE]
+        import configparser
+        values = [self.vault.get(key, '') for key in SENSITIVE]
+        path = self.root / 'etc/rdp-access-auth/frpc.ini'
+        if path.is_file():
+            parser = configparser.ConfigParser(interpolation=None)
+            try:
+                parser.read_string(path.read_text())
+                values.extend(value for section in parser.values() for key, value in section.items()
+                              if 'token' in key or 'password' in key or key.endswith('_key'))
+            except (OSError, configparser.Error):
+                pass
+        return values
 
     def guide(self):
         return {'steps': [
