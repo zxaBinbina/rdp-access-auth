@@ -129,7 +129,7 @@ Priority: optional
 Architecture: {architecture}
 Maintainer: a彬彬a <zxabinbina@mcyzw.top>
 Homepage: https://github.com/zxaBinbina/rdp-access-auth
-Depends: python3 (>= 3.{minor}), python3 (<< 3.{minor + 1}), libc6 (>= 2.34), libgcc-s1, systemd (>= 249), sudo, pkexec, python3-pyqt6, python3-pyqt6.qtwebengine
+Depends: python3 (>= 3.{minor}), python3 (<< 3.{minor + 1}), libc6 (>= 2.34), libgcc-s1, systemd (>= 249), sudo, pkexec, python3-pyqt6, python3-pyqt6.qtwebengine, fonts-noto-cjk
 Recommends: xdg-utils, x-terminal-emulator, desktop-file-utils
 Description: Native desktop manager for RDP authentication and tunnels
  Includes runtime Python libraries and an interactive deployment wizard.
@@ -174,6 +174,7 @@ Requires: sudo
 Requires: polkit
 Requires: python3-pyside6
 Requires: qt6-qtwebengine
+Requires: google-noto-sans-cjk-vf-fonts
 Recommends: xdg-utils
 Recommends: desktop-file-utils
 
