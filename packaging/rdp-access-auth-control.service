@@ -12,8 +12,10 @@ UMask=0077
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectHome=read-only
-ProtectSystem=full
-ReadWritePaths=/etc /usr/local
+# The controller creates credentials and service units under /etc.
+# Protect program files while permitting those explicit provisioning writes.
+ProtectSystem=true
+ReadWritePaths=/usr/local
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 ProtectKernelTunables=yes
 ProtectKernelModules=yes

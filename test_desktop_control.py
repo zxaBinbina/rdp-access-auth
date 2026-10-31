@@ -173,6 +173,16 @@ class ControlTests(unittest.TestCase):
         with self.assertRaises(ManagementError): self.call('onboarding.apply', {'revision': ready['revision']})
         self.assertEqual(self.api.calls, [])
 
+    def test_rejected_api_key_keeps_previously_working_credentials(self):
+        self.call('onboarding.inspect', {'sakura_api_token': 'working-fixture'})
+        def reject(*args, **kwargs):
+            raise ManagementError('平台拒绝凭据。', 422)
+        self.controller.provisioner.transport = reject
+        with self.assertRaises(ManagementError):
+            self.call('onboarding.inspect', {'sakura_api_token': 'bad-fixture'})
+        self.assertEqual(self.controller.provisioner.vault['sakura_api_token'], 'working-fixture')
+        self.assertNotIn('bad-fixture', self.controller.provisioner.vault_path.read_text())
+
     def test_revoked_agent_cannot_continue_background_deployment(self):
         ready = self.setup_plan()
         identity = self.controller.authority.register('Fixture')
@@ -213,3 +223,5 @@ class ProviderTests(unittest.TestCase):
             with self.assertRaises(ManagementError): read_identity(path)
             link = path.with_name('link'); link.symlink_to(path)
             with self.assertRaises(ManagementError): read_identity(link)
+            path.chmod(0o600); path.write_text('[]')
+            with self.assertRaises(ManagementError): read_identity(path)
