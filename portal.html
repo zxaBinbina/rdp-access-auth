@@ -391,6 +391,11 @@ details{margin-top:11px;padding:14px 16px;border:1px solid var(--border);border-
 .temporary-refresh{display:flex;align-items:center;gap:10px}.temporary-refresh .secret{flex:1;min-width:0;overflow-wrap:anywhere}.temporary-refresh button{width:auto;flex-shrink:0;margin:0;padding:12px}@media(max-width:380px){.temporary-refresh{flex-wrap:wrap}}
 .current-network{margin-top:20px}.current-network .address{display:block;overflow-wrap:anywhere}
 .appearance-controls{display:flex;justify-content:flex-end;gap:12px;width:min(1080px,calc(100% - 32px));margin:12px auto -24px}.appearance-controls label{display:flex;align-items:center;gap:8px;margin:0;color:var(--muted);font-size:12px}.appearance-controls select{font:inherit;background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:20px;padding:8px 12px;min-height:40px}.appearance-controls select:focus-visible{outline:2px solid var(--blue)}
+@supports not (color: color-mix(in srgb, red, blue)) {
+:root[data-palette='hutao-red']{--panel:#4c2c2c;--panel-hover:#573637;--section:#442524}
+:root[data-theme='light'][data-palette='hutao-red']{--panel:#fffaf3;--panel-hover:#f3e2d5;--section:#f2dfce}
+body{background:var(--bg)}.notice,.ok,.result-mark{background:var(--panel-hover)}
+}
 </style>
 </head><body>
 <a class="skip-link" href="#main">跳至认证内容</a>

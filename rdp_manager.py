@@ -181,6 +181,9 @@ def main(argv=None):
         args.command = 'gui'
         args.no_open = False
     try:
+        if PACKAGED and os.geteuid() != 0 and args.command in ('config', 'status', 'service', 'unlock', 'migrate'):
+            from desktop.cli import manage
+            return manage(args, secret, output)
         target = select_target(args.profile, args.config, args.state, args.service, args.scope)
         if args.command in ('launch', 'gui', 'desktop-login'):
             from desktop.app import run

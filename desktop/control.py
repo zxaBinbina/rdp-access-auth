@@ -8,7 +8,7 @@ import struct
 import threading
 
 from management import (ManagementError, Target, public_config, read_config, save_config,
-                        snapshot, state_operation)
+                        snapshot, state_operation, check_wordlist, atomic_private_write)
 from desktop.security import Authority
 from desktop.services import Services, run
 
@@ -144,7 +144,19 @@ class Controller:
             if not isinstance(params.get('revision'), str):
                 raise ManagementError('请先读取当前配置版本，避免覆盖其他人的修改。', 409)
             changes = params.get('changes')
+            words = None
+            if isinstance(changes, dict) and 'wordlist_path' in changes and (self.target.config.parent / 'deployment.json').is_file():
+                changes = dict(changes)
+                copied_path = self.target.config.parent / 'objects.json'
+                if changes['wordlist_path']:
+                    source = Path(changes['wordlist_path'])
+                    if not check_wordlist(self.target, {'wordlist_path': str(source)})['ok']:
+                        raise ManagementError('所选词库不可用，需要至少 2048 个不同的中文词。')
+                    words = source.read_bytes()
+                changes['wordlist_path'] = str(copied_path)
             result = save_config(self.target, changes, revision=params['revision'])
+            if words is not None:
+                atomic_private_write(self.target.config.parent / 'objects.json', words)
             if changes.get('sakura_token'):
                 from desktop.provisioning import write_json
                 self.provisioner.vault['sakura_api_token'] = changes['sakura_token']

@@ -295,3 +295,9 @@
   --browser-art-dot: #a83d33;
   --browser-art-title: #7b595e;
 }
+
+/* Qt WebEngine 6.4 (Ubuntu 24.04) predates CSS color-mix. */
+@supports not (color: color-mix(in srgb, red, blue)) {
+  :root[data-palette='hutao-red'] { --panel:#4c2c2c; --panel-hover:#573637; --section:#442524; }
+  :root[data-theme='light'][data-palette='hutao-red'] { --panel:#fffaf3; --panel-hover:#f3e2d5; --section:#f2dfce; }
+}

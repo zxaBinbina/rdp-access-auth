@@ -40,9 +40,11 @@ jobs:
       - run: .build/package-venv/bin/python tools/check_package.py dist/*.deb
       - run: sudo apt-get install -y ./dist/*.deb
       - run: rdp-auth --help && rdp-auth setup && rdp-auth deploy --dry-run
+      - run: python3 tools/check_controller_systemd.py
       - run: python3 -m venv --system-site-packages .build/ui-venv && .build/ui-venv/bin/pip install playwright
       - run: .build/ui-venv/bin/python tools/check_desktop_ui.py --app-root /usr/lib/rdp-access-auth
-      - run: sudo apt-get remove -y rdp-access-auth
+      - if: always()
+        run: sudo apt-get remove -y rdp-access-auth
       - uses: actions/upload-artifact@v4
         if: always()
         with:

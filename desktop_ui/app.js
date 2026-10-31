@@ -122,7 +122,7 @@
     if (state.step === 1) {
       body = title('先保护你的管理设置。','管理密码用于修改软件设置和授权 Agent，与远程访问密码独立。','YOUR CONTROL') + card(state.status.initialized ? '解锁已有管理账户' : '创建管理密码', form('bootstrap', `<div class="form-grid">${field('管理密码','password','',{type:'password',full:true,required:true,hint:state.status.initialized ? '使用已经设置的管理密码。' : '12～128 个字符；请私密保管。'})}${state.status.initialized ? '' : field('再次输入管理密码','repeat_password','',{type:'password',full:true,required:true})}</div><p class="notice">首次初始化时，系统会请求 Linux 管理员认证，以注册受保护的本机管理服务。</p><div class="actions">${submit(state.status.initialized ? '解锁并继续' : '创建并继续')}</div>`));
     } else if (state.step === 2) {
-      body = title('选择适合你的部署方式。','自动配置会减少官网上的重复操作，所有密钥都在本机保存。','SETUP METHOD') + card('怎样开始', form('mode', `<div class="radio-cards">${[['automatic','自动配置','提供 API 密钥后，由软件创建或配置隧道。','推荐'],['manual','手动引导','按步骤在官网准备，再由软件校验并安装本机组件。',''],['agent','交给 Agent','登记 MCP 身份，批准后让 Agent 帮你部署。','']].map(([value,label,text,tag])=>`<label class="choice"><input type="radio" name="mode" value="${value}" ${d.mode===value?'checked':''}><div><strong>${label}${tag?`<span class="tag">${tag}</span>`:''}</strong><p>${text}</p></div></label>`).join('')}</div><div class="actions">${button('上一步','previous','quiet')}${submit('继续')}</div>`));
+      body = title('选择适合你的部署方式。','自动配置会减少官网上的重复操作，所有密钥都在本机保存。','SETUP METHOD') + card('怎样开始', form('mode', `<div class="radio-cards">${[['automatic','自动配置','提供 API 密钥后，由软件创建或配置隧道。','推荐'],['manual','手动引导','按步骤在官网准备，再由软件校验并安装本机组件。',''],['agent','交给 Agent','登记 MCP 身份，批准后让 Agent 帮你部署。','']].map(([value,label,text,tag])=>`<label class="choice ${d.mode===value?'selected':''}"><input type="radio" name="mode" value="${value}" ${d.mode===value?'checked':''}><div><strong>${label}${tag?`<span class="tag">${tag}</span>`:''}</strong><p>${text}</p></div></label>`).join('')}</div><div class="actions">${button('上一步','previous','quiet')}${submit('继续')}</div>`));
     } else if (state.step === 3) {
       body = title('连接你的平台账户。','先准备 SakuraFrp 账户，以及已经托管到 Cloudflare 的域名。','CONNECT ACCOUNTS') +
         card('还没有准备好？', `<p>1. 注册 SakuraFrp，并按平台要求完成账户认证，取得“访问密钥”。</p><p>2. 在 Cloudflare 添加自己的域名，按提示修改域名的 DNS 服务器。</p><p>3. 自动配置需要 API Token：Cloudflare Tunnel 编辑、DNS 编辑、区域读取；自动创建 Turnstile 时再添加 Turnstile 编辑权限。</p><div class="actions">${button('SakuraFrp 控制台','link-sakura','compact')}${button('Cloudflare 控制台','link-cloudflare','compact')}${button('创建 API Token','link-cf-token','compact')}</div>`) +
@@ -312,6 +312,7 @@
     submitted(name,values).catch(error=>{if(target.isConnected)target.querySelector('.inline-error').textContent=error.message||'操作未完成。';else toast(error.message);}).finally(()=>{submitButton.disabled=false;});
   });
   document.addEventListener('change',event=>{
+    if(event.target.name==='mode')document.querySelectorAll('.choice').forEach(label=>label.classList.toggle('selected',label.querySelector('input').checked));
     if(event.target.name==='cf_account_id'&&state.view==='wizard'){
       const current=event.target.closest('form');state.draft={...state.draft,...data(current)};state.draft.cf_zone_id='';render();
     }
