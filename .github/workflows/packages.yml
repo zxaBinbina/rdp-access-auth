@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     tags: ['v*']
-    branches: ['codex/2.0-desktop']
+    branches: ['main']
 permissions:
   contents: read
 jobs:

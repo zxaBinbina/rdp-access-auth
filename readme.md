@@ -80,6 +80,8 @@ rdp-auth approve <申请编号>
 
 卸载通过 `sudo dnf remove rdp-access-auth` 或 `sudo apt remove rdp-access-auth`。软件包卸载会停止相关服务，保留配置、数据库、下载组件和远程平台资源，供重新安装恢复。KDE RDP 保留。删除远程隧道和清空密钥属于另行执行的清理操作。
 
+旧版完整代码与历史保留在 [`legacy/1.x`](https://github.com/zxaBinbina/rdp-access-auth/tree/legacy/1.x)，`main` 用于 2.0 开发。
+
 ## 开发与验证
 
 ```sh
