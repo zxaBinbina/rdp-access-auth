@@ -192,6 +192,16 @@ class ControlTests(unittest.TestCase):
         self.assertNotIn('fixture-secret', result['output'])
         self.assertIn('[已隐藏]', result['output'])
 
+    def test_invalid_user_address_is_rejected_before_resource_creation(self):
+        self.call('onboarding.inspect', {'sakura_api_token': 'fixture', 'cloudflare_api_token': 'fixture'})
+        with self.assertRaises(ManagementError):
+            self.call('onboarding.prepare', {'mode': 'automatic', 'hostname': 'auth.example.test',
+                'cf_account_id': ACCOUNT, 'cf_zone_id': ZONE, 'sakura_node_id': 1,
+                'rdp_address': 'not an address', 'password': 'Remote-password-1234!'})
+        self.assertEqual(self.api.sakura, [])
+        self.assertEqual(self.api.tunnels, [])
+        self.assertEqual(self.controller.provisioner.state['phase'], 'idle')
+
     def test_revoked_agent_cannot_continue_background_deployment(self):
         ready = self.setup_plan()
         identity = self.controller.authority.register('Fixture')

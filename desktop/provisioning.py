@@ -278,6 +278,10 @@ class Provisioner:
                  'turnstile_site_key': params.get('turnstile_site_key', ''),
                  'turnstile_secret_key': self.vault.get('turnstile_secret_key', '') if params.get('turnstile_site_key') else '',
                  'local_admission': {'listen_port': plan['admission_port'], 'target_port': plan['rdp_port'], 'duration_seconds': 21600}}
+        # Validate user-entered fields before creating any remote resources.
+        # Generated tunnel ID and public address are checked again after allocation.
+        validate_config({**draft, 'tunnel_id': plan.get('sakura_tunnel_id') or 1,
+                         'rdp_address': plan.get('rdp_address') or params['hostname'] + ':' + str(plan['rdp_port'])})
         write_json(self.stage / 'settings.json', draft)
         self.state.update(plan=plan, session_key=draft['session_key'], plan_fingerprint=fingerprint,
                           plan_id=self.state.get('plan_id') or secrets.token_hex(6))
