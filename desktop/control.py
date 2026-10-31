@@ -239,8 +239,15 @@ def make_server(controller, path=SOCKET_PATH, inherited_socket=None):
                 response = {'error': {'code': exc.status, 'message': str(exc)}}
             except (ValueError, TypeError):
                 response = {'error': {'code': 400, 'message': '请求数据格式无效。'}}
-            except Exception:
+            except Exception as exc:
                 # Exception details may contain credentials; do not send or print them.
+                import sys
+                import traceback
+                frames = traceback.extract_tb(exc.__traceback__)
+                location = frames[-1] if frames else None
+                print('Controller failure:', type(exc).__name__, 'errno=', getattr(exc, 'errno', None),
+                      'at', (Path(location.filename).name + ':' + str(location.lineno)) if location else 'unknown',
+                      file=sys.stderr, flush=True)
                 response = {'error': {'code': 500, 'message': '操作未完成，请检查配置和运行环境后重试。'}}
             try:
                 self.wfile.write(json.dumps(response, ensure_ascii=False).encode() + b'\n')

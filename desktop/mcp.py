@@ -67,7 +67,7 @@ def read_identity(path):
             if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) & 0o077 or metadata.st_size > 16384:
                 raise ValueError()
             value = json.load(stream)
-        if not isinstance(value.get('id'), str) or not isinstance(value.get('key'), str):
+        if not isinstance(value, dict) or not isinstance(value.get('id'), str) or not isinstance(value.get('key'), str):
             raise ValueError()
         return {'id': value['id'], 'key': value['key']}
     except (OSError, ValueError, KeyError):

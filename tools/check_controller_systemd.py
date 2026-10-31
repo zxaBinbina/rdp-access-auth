@@ -4,11 +4,13 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import atexit
 
 if os.environ.get('GITHUB_ACTIONS') != 'true' or os.geteuid() == 0:
     raise SystemExit('Only run as an ordinary user on a disposable GitHub Actions runner')
 if Path('/etc/rdp-access-auth-control/authority.json').exists():
     raise SystemExit('Refusing to overwrite an initialized installation')
+atexit.register(lambda: subprocess.run(['sudo', 'journalctl', '-u', 'rdp-access-auth-control.service', '-n', '30', '--no-pager']))
 sys.path.insert(0, '/usr/lib/rdp-access-auth')
 import package_bootstrap
 from desktop.control import Client

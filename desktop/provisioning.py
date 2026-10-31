@@ -174,15 +174,17 @@ class Provisioner:
                 if not isinstance(value, str) or len(value) > 16384 or any(ch.isspace() or ord(ch) < 32 for ch in value):
                     raise ManagementError('平台密钥格式无效。')
                 candidate[key] = value
-        self.vault = candidate
-        write_json(self.vault_path, self.vault)
-        sakura, cloudflare = self.clients()
+        options = {'transport': self.transport} if self.transport else {}
+        sakura = Sakura(candidate.get('sakura_api_token', ''), **options)
+        cloudflare = Cloudflare(candidate.get('cloudflare_api_token', ''), **options)
         result = {'sakura': sakura.inventory()}
-        if self.vault.get('cloudflare_api_token'):
+        if candidate.get('cloudflare_api_token'):
             result['cloudflare'] = cloudflare.inventory()
             account = params.get('cf_account_id')
             if account:
                 result['cloudflare']['tunnels'] = cloudflare.tunnels(account)
+        self.vault = candidate
+        write_json(self.vault_path, self.vault)
         self.state['inventory'] = result
         self.persist()
         return result
