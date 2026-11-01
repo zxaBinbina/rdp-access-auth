@@ -48,6 +48,24 @@ class ManagementFixture(unittest.TestCase):
 
 
 class ManagementTests(ManagementFixture):
+    def test_passkey_registration_policy_defaults_validates_and_preserves_config(self):
+        self.create()
+        before, revision = read_config(self.target.config)
+        self.assertIs(before['allow_passkey_registration'], False)
+        for invalid in ('false', 'true', 0, 1, None, [], {}):
+            with self.assertRaises(ManagementError):
+                save_config(self.target, {'allow_passkey_registration': invalid}, revision=revision)
+            self.assertEqual(read_config(self.target.config)[1], revision)
+        result = save_config(self.target, {'allow_passkey_registration': True}, revision=revision)
+        self.assertIs(result['config']['allow_passkey_registration'], True)
+        self.assertIn('立即生效', result['message'])
+        after, _ = read_config(self.target.config)
+        self.assertEqual(after, {**before, 'allow_passkey_registration': True})
+        self.assertIs(snapshot(self.target)['config']['allow_passkey_registration'], True)
+        after.pop('allow_passkey_registration')
+        self.target.config.write_text(json.dumps(after))
+        self.assertIs(snapshot(self.target)['config']['allow_passkey_registration'], False)
+
     def test_create_redacts_and_never_overwrites(self):
         result = self.create()
         raw = self.target.config.read_text()

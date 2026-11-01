@@ -10,3 +10,9 @@ Icon=rdp-access-auth
 Terminal=false
 Categories=Network;RemoteAccess;
 Keywords=RDP;Authentication;SakuraFrp;Cloudflare;
+Actions=Demo;
+
+[Desktop Action Demo]
+Name=Interface demo
+Name[zh_CN]=界面演示（无需配置）
+Exec=rdp-auth demo

@@ -117,7 +117,13 @@ def stage_tree(destination):
             path.chmod(0o644)
 
 
+def native_version(version):
+    # Both RPM and dpkg sort a tilde prerelease before the corresponding stable release.
+    return version.replace('-dev.', '~dev.')
+
+
 def build_deb(tree, output, version):
+    version = native_version(version)
     minor = sys.version_info.minor
     architecture = {'x86_64': 'amd64', 'aarch64': 'arm64'}[platform.machine()]
     control = tree / 'DEBIAN'
@@ -143,6 +149,7 @@ Description: Native desktop manager for RDP authentication and tunnels
 
 
 def build_rpm(tree, output, version, work):
+    version = native_version(version)
     minor = sys.version_info.minor
     libraries = json.loads((tree / 'usr/lib/rdp-access-auth/THIRD_PARTY.json').read_text())
     license_expression = ' AND '.join(sorted({'MIT', 'ISC', 'LGPL-2.0-or-later', *(f'({item["license"]})' if ' OR ' in item['license'] else item['license'] for item in libraries)}))

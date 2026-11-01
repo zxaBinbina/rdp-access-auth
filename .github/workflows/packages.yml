@@ -43,6 +43,7 @@ jobs:
       - run: python3 tools/check_controller_systemd.py
       - run: python3 -m venv --system-site-packages .build/ui-venv && .build/ui-venv/bin/pip install playwright
       - run: .build/ui-venv/bin/python tools/check_desktop_ui.py --app-root /usr/lib/rdp-access-auth
+      - run: .build/ui-venv/bin/python tools/check_demo_ui.py --app-root /usr/lib/rdp-access-auth
       - if: always()
         run: sudo apt-get remove -y rdp-access-auth
       - uses: actions/upload-artifact@v4
@@ -52,6 +53,7 @@ jobs:
           path: |
             dist/*
             .build/desktop-check/*
+            .build/demo-check/*
   debian:
     runs-on: ubuntu-24.04
     container: debian:13

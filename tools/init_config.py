@@ -34,7 +34,7 @@ def main():
     salt = secrets.token_hex(16)
     config = dict(hostname=args.hostname, rdp_address=args.rdp_address, tunnel_id=args.tunnel_id,
         password_salt=salt, password_hash=hashlib.scrypt(password.encode(), salt=bytes.fromhex(salt), n=16384, r=8, p=1).hex(),
-        session_key=secrets.token_hex(32), sakura_token=token,
+        session_key=secrets.token_hex(32), sakura_token=token, allow_passkey_registration=False,
         turnstile_site_key=sitekey, turnstile_secret_key=turnstile_secret)
     os.umask(0o077)
     args.output.parent.mkdir(parents=True, exist_ok=True)

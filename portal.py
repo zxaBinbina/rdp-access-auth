@@ -20,7 +20,7 @@ from admission import Admissions, configuration as admission_configuration, star
 
 PAGE = Path(__file__).with_name('portal.html').read_text()
 
-def create_app(settings, state_path, authorize_callback=None):
+def create_app(settings, state_path, authorize_callback=None, *, settings_path=None):
     sitekey = settings.get('turnstile_site_key', '')
     turnstile_secret = settings.get('turnstile_secret_key', '')
     if bool(sitekey) != bool(turnstile_secret) or any(
@@ -42,6 +42,19 @@ def create_app(settings, state_path, authorize_callback=None):
     admission_config = admission_configuration(settings)
     admissions = Admissions(state_path, admission_config['duration_seconds']) if admission_config else None
     app.extensions.update(admissions=admissions, admission_config=admission_config)
+
+    def registration_allowed():
+        # Reload only this policy so the desktop switch takes effect without
+        # restarting authentication or disconnecting existing RDP sessions.
+        if 'allow_passkey_registration' not in g:
+            value = settings
+            if settings_path is not None:
+                try:
+                    value = json.loads(Path(settings_path).read_bytes())
+                except (OSError, ValueError, UnicodeError):
+                    value = {}
+            g.allow_passkey_registration = isinstance(value, dict) and value.get('allow_passkey_registration') is True
+        return g.allow_passkey_registration
 
     def client_ip():
         try:
@@ -126,6 +139,7 @@ def create_app(settings, state_path, authorize_callback=None):
         if method not in ('password', 'temporary', 'passkey'):
             method = 'password'
         extra.setdefault('local_admission', bool(admissions))
+        extra.setdefault('allow_passkey_registration', registration_allowed())
         extra.setdefault('has_management', has_management())
         extra.setdefault('revoke_ip', g.get('authorized_ips', [''])[0] if g.get('authorized_ips') else '')
         extra.setdefault('can_revoke', may_revoke(extra['revoke_ip']))
@@ -286,7 +300,7 @@ def create_app(settings, state_path, authorize_callback=None):
     def session_hash():
         return hashlib.sha256(session['csrf'].encode()).hexdigest()
 
-    def start_management(ip, method):
+    def start_management(ip, method, passkey_id=None):
         session.clear()
         session.permanent = True
         session['csrf'] = secrets.token_urlsafe(32)
@@ -294,6 +308,8 @@ def create_app(settings, state_path, authorize_callback=None):
         session['authorized_ip'] = ip
         session['authorized_at'] = int(time.time())
         session['auth_method'] = method
+        if method == 'passkey' and passkey_id:
+            session['passkey_id'] = passkey_id
         digest = hashlib.sha256(session['management'].encode()).hexdigest()
         with closing(sqlite3.connect(state_path)) as db, db:
             db.execute('DELETE FROM auth_management WHERE expires <= ?', (int(time.time()),))
@@ -308,9 +324,9 @@ def create_app(settings, state_path, authorize_callback=None):
             return db.execute('SELECT 1 FROM auth_management WHERE digest=? AND expires>?', (digest, int(time.time()))).fetchone() is not None
 
     def can_bind():
-        return has_management() and session.get('auth_method') == 'password'
+        return registration_allowed() and has_management() and session.get('auth_method') == 'password'
 
-    def admit(target, attempt, temporary_token=None, method='passkey'):
+    def admit(target, attempt, temporary_token=None, method='passkey', passkey_id=None):
         try:
             wait, scope = guard.locked(g.ip)
             if wait:
@@ -326,7 +342,7 @@ def create_app(settings, state_path, authorize_callback=None):
                 return error('授权服务暂时不可用，请稍后重试。临时密码未更换。' if temporary_token else '授权服务暂时不可用，请稍后重试。', 502)
             next_phrase = temporary.rotate(temporary_token) if temporary_token else None
             guard.finish(attempt, True)
-            start_management(target, method)
+            start_management(target, method, passkey_id)
             g.authorized_ips = [target]
             if request.is_json:
                 return jsonify(ok=True, redirect='/authorized')
@@ -404,10 +420,13 @@ def create_app(settings, state_path, authorize_callback=None):
     def credentials():
         if not has_management():
             return page('请先通过任一种方式认证，再在成功页管理通行密钥或查看临时密码。', status=403)
-        return page(manage=True, can_bind=can_bind(), keys=passkeys.list(), current_temporary=temporary.current())
+        return page(manage=True, can_bind=can_bind(), keys=passkeys.list(), current_temporary=temporary.current(),
+                    current_passkey_id=session.get('passkey_id') if session.get('auth_method') == 'passkey' else None)
 
     @app.post('/passkeys/register/options')
     def registration_options():
+        if not registration_allowed():
+            return error('管理员已关闭通行密钥注册。', 403)
         if not can_bind():
             return error('请先使用固定密码认证，再绑定通行密钥。', 403)
         try:
@@ -417,6 +436,8 @@ def create_app(settings, state_path, authorize_callback=None):
 
     @app.post('/passkeys/register/verify')
     def registration_verify():
+        if not registration_allowed():
+            return error('管理员已关闭通行密钥注册。', 403)
         if not can_bind():
             return error('请先使用固定密码认证，再绑定通行密钥。', 403)
         data = fields()
@@ -431,8 +452,16 @@ def create_app(settings, state_path, authorize_callback=None):
     def delete_passkey():
         if not has_management():
             return error('管理会话已过期，请重新认证。', 403)
-        passkeys.delete(fields().get('key_id', ''))
-        return redirect('/credentials', code=303)
+        key_id = session.get('passkey_id')
+        if session.get('auth_method') != 'passkey' or not key_id or fields().get('key_id') != key_id:
+            return error('只能移除本次认证使用的通行密钥。', 403)
+        passkeys.delete(key_id)
+        digest = hashlib.sha256(session['management'].encode()).hexdigest()
+        with closing(sqlite3.connect(state_path)) as db, db:
+            db.execute('DELETE FROM auth_management WHERE digest=?', (digest,))
+        session.clear()
+        session['csrf'] = secrets.token_urlsafe(32)
+        return redirect('/?method=password&reauth=1', code=303)
 
     @app.post('/passkeys/auth/options')
     def authentication_options():
@@ -458,11 +487,11 @@ def create_app(settings, state_path, authorize_callback=None):
                 return error('仅支持当前连接的公网 IPv4；请通过 IPv4 网络打开认证页面，不能指定其他 IP。', 400)
             data = fields()
             try:
-                passkeys.authenticate(data.get('challenge_id', ''), session_hash(), data.get('credential'))
+                passkey_id = passkeys.authenticate(data.get('challenge_id', ''), session_hash(), data.get('credential'))
             except Exception as exc:
                 app.logger.warning('Passkey authentication rejected: type=%s', type(exc).__name__)
                 return bad_credentials(attempt, '通行密钥未通过验证，请重试或选择密码登录。')
-            return admit(target, attempt)
+            return admit(target, attempt, passkey_id=passkey_id)
         finally:
             guard.finish(attempt, None)
 
@@ -474,6 +503,7 @@ if os.environ.get('RDP_AUTH_CONFIG'):
     if os.environ.get('RDP_AUTH_WORDLIST'):
         runtime_settings['wordlist_path'] = os.environ['RDP_AUTH_WORDLIST']
     app = create_app(runtime_settings,
-                     os.environ.get('RDP_AUTH_STATE', '/var/lib/rdp-auth/state.sqlite3'))
+                     os.environ.get('RDP_AUTH_STATE', '/var/lib/rdp-auth/state.sqlite3'),
+                     settings_path=os.environ['RDP_AUTH_CONFIG'])
     if app.extensions['admissions']:
         app.extensions['admission_thread'] = start_gateway(app.extensions['admissions'], app.extensions['admission_config'])

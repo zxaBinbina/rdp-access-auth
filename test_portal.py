@@ -16,7 +16,7 @@ class PortalTests(unittest.TestCase):
         wordlist.write_text(json.dumps(['测试'+chr(0x4e00+i) for i in range(2048)]))
         self.settings=dict(hostname='auth.example.test',rdp_address='desktop.example.test:26869',session_key='test-secret',
             password_salt='aa'*16,password_hash=password_hash('Correct-password-1234','aa'*16),sakura_token='unused',tunnel_id=1,
-            wordlist_path=str(wordlist))
+            wordlist_path=str(wordlist), allow_passkey_registration=True)
         self.grants=[];self.app=create_app(self.settings,self.state,self.grants.append);self.client=self.app.test_client()
         self.headers={'CF-Connecting-IP':'1.1.1.1','Origin':self.base}
         self.temp=self.app.extensions['temporary_passwords'];self.keys=self.app.extensions['passkeys'];self.initial=self.temp.current()
@@ -147,8 +147,110 @@ class PortalTests(unittest.TestCase):
         o=self.api('auth/options').json;c=self.make_credential(o)
         with patch('auth_credentials.time.time',return_value=time.time()+121):self.assertEqual(self.api('auth/verify',challenge_id=o['challenge_id'],credential=c).status_code,401)
     def test_deleted_passkey_rejected(self):
-        self.enroll();self.assertEqual(self.api('delete',key_id=b64(self.credential_id)).status_code,303)
+        self.enroll();self.authenticate_key()
+        self.assertEqual(self.api('delete',key_id=b64(self.credential_id)).status_code,303)
         o=self.api('auth/options').json;self.assertEqual(self.api('auth/verify',challenge_id=o['challenge_id'],credential=self.make_credential(o)).status_code,401)
+
+    def authenticate_key(self, count=1):
+        options = self.api('auth/options').json
+        self.assertEqual(self.api('auth/verify', challenge_id=options['challenge_id'],
+                                 credential=self.make_credential(options, count=count)).status_code, 200)
+
+    def credentials_page(self):
+        return self.client.get('/credentials', base_url=self.base, headers=self.headers)
+
+    def test_registration_is_disabled_by_default_and_rejects_non_booleans(self):
+        self.settings.pop('allow_passkey_registration')
+        self.send()
+        for policy in (None, False, 'true', 'false', 1, [], {}):
+            if policy is not None:
+                self.settings['allow_passkey_registration'] = policy
+            with self.subTest(policy=policy):
+                for endpoint in ('register/options', 'register/verify'):
+                    self.assertEqual(self.api(endpoint).status_code, 403)
+                body = self.credentials_page().text
+                self.assertIn('管理员已关闭通行密钥注册', body)
+                self.assertNotIn('id="register-key"', body)
+        self.assertEqual(self.keys.list(), [])
+
+    def test_disabling_registration_rejects_pending_challenge_but_allows_login(self):
+        self.enroll()
+        existing = self.private_key, self.credential_id
+        options = self.api('register/options').json
+        pending = self.make_credential(options, register=True, count=0)
+        self.settings['allow_passkey_registration'] = False
+        self.assertEqual(self.api('register/verify', challenge_id=options['challenge_id'], credential=pending).status_code, 403)
+        self.assertEqual(len(self.keys.list()), 1)
+        self.private_key, self.credential_id = existing
+        self.authenticate_key()
+        self.assertIn('移除当前通行密钥', self.credentials_page().text)
+
+    def test_registration_policy_reloads_from_config_and_fails_closed(self):
+        path = Path(self.tmp.name) / 'settings.json'
+        path.write_text(json.dumps(self.settings))
+        self.app = create_app(self.settings, self.state, self.grants.append, settings_path=path)
+        self.client = self.app.test_client()
+        self.send()
+        options = self.api('register/options').json
+        credential = self.make_credential(options, register=True, count=0)
+        for content in ('{}', '{"allow_passkey_registration":false}', '{broken', '[]',
+                        '{"allow_passkey_registration":"true"}', '{"allow_passkey_registration":1}'):
+            path.write_text(content)
+            for endpoint in ('register/options', 'register/verify'):
+                self.assertEqual(self.api(endpoint, challenge_id=options['challenge_id'], credential=credential).status_code, 403)
+        path.write_bytes(b'\xff')
+        self.assertEqual(self.api('register/options').status_code, 403)
+        path.unlink()
+        self.assertEqual(self.api('register/options').status_code, 403)
+        path.mkdir()
+        self.assertEqual(self.api('register/options').status_code, 403)
+        path.rmdir()
+        path.write_text('{"allow_passkey_registration":true}')
+        self.assertIn('id="register-key"', self.credentials_page().text)
+        self.assertEqual(self.api('register/verify', challenge_id=options['challenge_id'], credential=credential).status_code, 200)
+
+    def test_password_and_temporary_sessions_cannot_delete_keys(self):
+        self.enroll()
+        key_id = b64(self.credential_id)
+        for method in ('password', 'temporary'):
+            self.assertEqual(self.send(method, temporary=self.temp.current()).status_code, 200)
+            self.assertNotIn('action="/passkeys/delete"', self.credentials_page().text)
+            self.assertEqual(self.api('delete', key_id=key_id, passkey_id=key_id).status_code, 403)
+        self.assertEqual(len(self.keys.list()), 1)
+
+    def test_passkey_can_only_delete_current_key_and_ends_management_session(self):
+        self.enable_admission()
+        self.enroll()
+        first_id = b64(self.credential_id)
+        self.enroll()
+        current_id = b64(self.credential_id)
+        self.authenticate_key()
+        body = self.credentials_page().text
+        self.assertEqual(body.count('action="/passkeys/delete"'), 1)
+        self.assertIn('name="key_id" value="' + current_id + '"', body)
+        self.assertNotIn('name="key_id" value="' + first_id + '"', body)
+        self.assertEqual(self.api('delete', key_id=first_id, passkey_id=first_id).status_code, 403)
+        self.assertEqual(self.api('delete', key_id=current_id, csrf='invalid').status_code, 403)
+        cookie = self.client.get_cookie('__Host-rdp-auth', domain='auth.example.test').value
+        with patch('portal.time.time', return_value=time.time()+601):
+            self.assertEqual(self.api('delete', key_id=current_id).status_code, 403)
+        self.client.set_cookie('__Host-rdp-auth', cookie, domain='auth.example.test')
+        response = self.api('delete', key_id=current_id)
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.location, '/?method=password&reauth=1')
+        self.assertEqual([key['id'] for key in self.keys.list()], [first_id])
+        self.assertEqual(self.credentials_page().status_code, 403)
+        self.client.set_cookie('__Host-rdp-auth', cookie, domain='auth.example.test')
+        self.assertEqual(self.credentials_page().status_code, 403)
+        self.assertIsNotNone(self.admissions.get('1.1.1.1'))
+
+    def test_password_reauthentication_removes_current_passkey_privilege(self):
+        self.enroll()
+        self.authenticate_key()
+        self.assertIn('移除当前通行密钥', self.credentials_page().text)
+        self.send()
+        self.assertNotIn('action="/passkeys/delete"', self.credentials_page().text)
+        self.assertEqual(self.api('delete', key_id=b64(self.credential_id)).status_code, 403)
 
     def regenerate(self, phrase, **extra):
         return self.client.post('/temporary/regenerate', base_url=self.base, headers=self.headers,

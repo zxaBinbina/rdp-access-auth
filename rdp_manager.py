@@ -54,6 +54,8 @@ def parser():
     sub.add_parser('desktop-control', help=argparse.SUPPRESS)
     sub.add_parser('desktop-bootstrap', help=argparse.SUPPRESS)
     sub.add_parser('desktop-login', help='登录桌面时按已保存偏好启动')
+    demo = sub.add_parser('demo', help='打开独立演示窗口，无需配置即可浏览全部界面')
+    demo.add_argument('--wizard', action='store_true', help='从首次配置向导演示开始')
     mcp = sub.add_parser('mcp', help='通过 stdio 提供本机 MCP 接口')
     mcp.add_argument('--identity', required=True, type=Path)
     approve = sub.add_parser('approve', help='在独立终端批准 Agent 请求')
@@ -181,6 +183,9 @@ def main(argv=None):
         args.command = 'gui'
         args.no_open = False
     try:
+        if args.command == 'demo':
+            from desktop.app import run
+            return run('wizard' if args.wizard else 'overview', demo=True)
         if PACKAGED and os.geteuid() != 0 and args.command in ('config', 'status', 'service', 'unlock', 'migrate'):
             from desktop.cli import manage
             return manage(args, secret, output)

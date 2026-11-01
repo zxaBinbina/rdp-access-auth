@@ -19,7 +19,7 @@ PACKAGED = (ROOT / 'PACKAGED.json').is_file()
 DATA_ROOT = (Path(os.environ.get('XDG_DATA_HOME') or Path.home() / '.local/share') / 'rdp-access-auth'
              if PACKAGED else ROOT)
 PUBLIC_FIELDS = ('hostname', 'rdp_address', 'tunnel_id', 'turnstile_site_key', 'wordlist_path')
-EDITABLE_FIELDS = set(PUBLIC_FIELDS) | {'password', 'sakura_token', 'turnstile_secret_key', 'disable_turnstile', 'local_admission'}
+EDITABLE_FIELDS = set(PUBLIC_FIELDS) | {'password', 'sakura_token', 'turnstile_secret_key', 'disable_turnstile', 'local_admission', 'allow_passkey_registration'}
 
 
 class ManagementError(Exception):
@@ -84,6 +84,7 @@ def read_config(path, missing_ok=False):
 
 def public_config(value):
     return {**{k: value.get(k, '') for k in PUBLIC_FIELDS},
+            'allow_passkey_registration': value.get('allow_passkey_registration') is True,
             'local_admission': value.get('local_admission'),
             'has_password': bool(value.get('password_hash')),
             'has_sakura_token': bool(value.get('sakura_token')),
@@ -111,6 +112,8 @@ def rdp_valid(value):
 
 def validate_config(value):
     from admission import configuration
+    if type(value.get('allow_passkey_registration', False)) is not bool:
+        raise ManagementError('允许添加通行密钥必须为布尔值。')
     try:
         configuration(value)
     except ValueError as exc:
@@ -201,7 +204,7 @@ def save_config(target, changes, revision=None, create=False):
             raise ManagementError('配置已被其他窗口或命令修改。请重新载入后再保存。', 409)
         value = previous.copy()
         if create:
-            value.update(session_key=secrets.token_hex(32), turnstile_site_key='', turnstile_secret_key='')
+            value.update(session_key=secrets.token_hex(32), turnstile_site_key='', turnstile_secret_key='', allow_passkey_registration=False)
         for key in PUBLIC_FIELDS:
             if key in changes:
                 v = changes[key]
@@ -211,6 +214,8 @@ def save_config(target, changes, revision=None, create=False):
                     value[key] = v
         if 'local_admission' in changes:
             value['local_admission'] = changes['local_admission']
+        if 'allow_passkey_registration' in changes:
+            value['allow_passkey_registration'] = changes['allow_passkey_registration']
         for key in ('sakura_token', 'turnstile_secret_key'):
             if key in changes and changes[key] != '':
                 value[key] = changes[key]
@@ -229,7 +234,9 @@ def save_config(target, changes, revision=None, create=False):
             atomic_private_write(Path(str(target.config) + '.bak'), target.config.read_bytes(), owner)
         atomic_private_write(target.config, data, owner)
     return dict(config=public_config(value), revision=hashlib.sha256(data).hexdigest(),
-                message='配置已保存。运行中的认证服务需要重启后生效。' if previous else '配置已创建。可继续准备词库并启动认证服务。',
+                message=('通行密钥注册设置已保存，立即生效。' if set(changes) == {'allow_passkey_registration'}
+                         else '配置已保存。通行密钥注册设置立即生效，其他修改需重启认证服务。')
+                        if previous else '配置已创建。可继续准备词库并启动认证服务。',
                 hostname_changed=bool(previous and previous.get('hostname') != value['hostname']))
 
 

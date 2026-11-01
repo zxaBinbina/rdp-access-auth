@@ -10,13 +10,16 @@ import threading
 
 from management import ManagementError, atomic_private_write
 from desktop.control import Client, SOCKET_PATH
+from time import monotonic
+
+IDLE_LOCK_SECONDS = 10 * 60
 
 
-def run(view='open', background=False, socket_path=SOCKET_PATH):
+def run(view='open', background=False, socket_path=SOCKET_PATH, demo=False):
     if os.geteuid() == 0:
         raise ManagementError('请以普通桌面用户启动软件；需要管理员权限时会由系统单独询问。')
     try:
-        from PySide6.QtCore import QObject, Signal, Slot, QUrl, QBuffer, QIODevice, QTimer, QSettings, Qt
+        from PySide6.QtCore import QObject, Signal, Slot, QUrl, QBuffer, QIODevice, QTimer, QSettings, QEvent, Qt
         from PySide6.QtGui import QIcon, QAction, QDesktopServices
         from PySide6.QtWidgets import QApplication, QMainWindow, QSystemTrayIcon, QMenu
         from PySide6.QtNetwork import QLocalServer, QLocalSocket
@@ -25,7 +28,7 @@ def run(view='open', background=False, socket_path=SOCKET_PATH):
         from PySide6.QtWebEngineWidgets import QWebEngineView
     except ImportError:
         try:
-            from PyQt6.QtCore import QObject, pyqtSignal as Signal, pyqtSlot as Slot, QUrl, QBuffer, QIODevice, QTimer, QSettings, Qt
+            from PyQt6.QtCore import QObject, pyqtSignal as Signal, pyqtSlot as Slot, QUrl, QBuffer, QIODevice, QTimer, QSettings, QEvent, Qt
             from PyQt6.QtGui import QIcon, QAction, QDesktopServices
             from PyQt6.QtWidgets import QApplication, QMainWindow, QSystemTrayIcon, QMenu
             from PyQt6.QtNetwork import QLocalServer, QLocalSocket
@@ -45,10 +48,15 @@ def run(view='open', background=False, socket_path=SOCKET_PATH):
     app.setOrganizationName('rdp-access-auth')
     app.setDesktopFileName('rdp-access-auth')
     app.setQuitOnLastWindowClosed(False)
-    settings = QSettings()
+    settings = None if demo else QSettings()
     icon = QIcon(str(assets / 'logo.png'))
     app.setWindowIcon(icon)
-    client = Client(socket_path)
+    if demo:
+        from desktop.demo import DemoClient
+        client = DemoClient()
+    else:
+        client = Client(socket_path)
+    version = (assets.parent / 'VERSION').read_text().strip()
     try:
         initial = client.request('status')
     except ManagementError:
@@ -58,6 +66,8 @@ def run(view='open', background=False, socket_path=SOCKET_PATH):
 
     # One desktop instance per login user. Subsequent launcher invocations focus it.
     instance_name = 'rdp-access-auth-desktop-' + str(os.getuid())
+    if demo:
+        instance_name += '-demo'
     if socket_path != SOCKET_PATH:
         import hashlib
         instance_name += '-' + hashlib.sha256(str(socket_path).encode()).hexdigest()[:8]
@@ -78,14 +88,21 @@ def run(view='open', background=False, socket_path=SOCKET_PATH):
         def requestStarted(self, job):
             url = job.requestUrl()
             name = url.path().lstrip('/') or 'index.html'
-            allowed = {'index.html': 'text/html', 'app.js': 'text/javascript', 'theme.js': 'text/javascript',
+            allowed = {'index.html': 'text/html', 'app.js': 'text/javascript', 'dom.js': 'text/javascript', 'theme.js': 'text/javascript',
                        'app.css': 'text/css', 'theme.css': 'text/css', 'icons.svg': 'image/svg+xml', 'logo.png': 'image/png'}
+            if demo:
+                allowed.update({'demo-portal.html': 'text/html', 'demo-portal.js': 'text/javascript'})
             if url.host() != 'ui' or name not in allowed or job.requestMethod() != b'GET':
                 job.fail(type(job).Error.UrlNotFound)
                 return
             try:
                 buffer = QBuffer(job)
-                buffer.setData((assets / name).read_bytes())
+                if demo and name == 'demo-portal.html':
+                    from urllib.parse import parse_qs
+                    screen = parse_qs(url.query()).get('screen', ['password'])[0]
+                    buffer.setData(client.portal_preview(screen).encode())
+                else:
+                    buffer.setData((assets / name).read_bytes())
                 buffer.open(QIODevice.OpenModeFlag.ReadOnly)
                 job.reply(allowed[name].encode(), buffer)
             except OSError:
@@ -95,7 +112,7 @@ def run(view='open', background=False, socket_path=SOCKET_PATH):
         def acceptNavigationRequest(self, url, nav_type, main_frame):
             if url.scheme() == 'rdpapp' and url.host() == 'ui':
                 return True
-            if url.scheme() == 'https' and nav_type == QWebEnginePage.NavigationType.NavigationTypeLinkClicked:
+            if not demo and url.scheme() == 'https' and nav_type == QWebEnginePage.NavigationType.NavigationTypeLinkClicked:
                 QDesktopServices.openUrl(url)
             return False
 
@@ -107,10 +124,12 @@ def run(view='open', background=False, socket_path=SOCKET_PATH):
         ready = Signal()
         copy_requested = Signal(str)
         open_requested = Signal(str)
+        demo_requested = Signal()
         def __init__(self):
             super().__init__()
             self.pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix='rdp-window')
             self.session = None
+            self.last_activity = None
             self.polling = False
             self.closed = False
             self.session_lock = threading.RLock()
@@ -129,9 +148,18 @@ def run(view='open', background=False, socket_path=SOCKET_PATH):
         def handle(self, request):
             request_id, method, params = request.get('id'), request.get('method'), request.get('params') or {}
             try:
+                self.expire_if_idle()
                 if method == 'ui.ready':
                     self.ready.emit()
-                    value = initial
+                    value = {**initial, 'version': version}
+                elif method == 'ui.demo':
+                    self.demo_requested.emit()
+                    value = {'opened': True}
+                elif demo and method == 'demo.reset':
+                    self.lock_window()
+                    value = client.request(method)
+                elif demo and method in ('ui.bootstrap', 'ui.open_link'):
+                    value = client.request(method, params)
                 elif method == 'ui.bootstrap':
                     password = params.get('password')
                     if not isinstance(password, str) or not 12 <= len(password) <= 128:
@@ -150,6 +178,7 @@ def run(view='open', background=False, socket_path=SOCKET_PATH):
                             client.request('security.logout', session=result['session'])
                             raise ManagementError('窗口已关闭，请重新解锁。', 401)
                         self.session = result['session']
+                        self.last_activity = monotonic()
                     value = {'unlocked': True}
                 elif method == 'security.logout':
                     self.lock_window()
@@ -166,6 +195,9 @@ def run(view='open', background=False, socket_path=SOCKET_PATH):
                         raise ManagementError('复制内容无效。')
                     self.copy_requested.emit(value)
                     value = {'copied': True}
+                elif demo and method == 'ui.export_agent':
+                    self.require_session()
+                    value = client.request(method, params, session=self.session)
                 elif method == 'ui.export_agent':
                     self.require_session()
                     identity = params.get('identity', {})
@@ -188,7 +220,8 @@ def run(view='open', background=False, socket_path=SOCKET_PATH):
                     if method == 'preferences.save':
                         self.preferences_changed.emit(value)
                     if method == 'security.password':
-                        self.session = None
+                        with self.session_lock:
+                            self.session = self.last_activity = None
                 self.response.emit(json.dumps({'id': request_id, 'result': value}, ensure_ascii=False))
             except ManagementError as exc:
                 self.response.emit(json.dumps({'id': request_id, 'error': {'message': str(exc), 'code': exc.status}}, ensure_ascii=False))
@@ -199,10 +232,23 @@ def run(view='open', background=False, socket_path=SOCKET_PATH):
             if self.session is None:
                 raise ManagementError('请先解锁设置。', 401)
 
-        def lock_window(self):
+        def note_activity(self):
+            with self.session_lock:
+                if self.session and not self.expire_if_idle():
+                    self.last_activity = monotonic()
+
+        def expire_if_idle(self):
+            with self.session_lock:
+                if self.session and monotonic() - self.last_activity >= IDLE_LOCK_SECONDS:
+                    self.lock_window('idle')
+                    return True
+            return False
+
+        def lock_window(self, reason=None):
             with self.session_lock:
                 self.generation += 1
                 token, self.session = self.session, None
+                self.last_activity = None
             if token:
                 def revoke():
                     try:
@@ -210,7 +256,7 @@ def run(view='open', background=False, socket_path=SOCKET_PATH):
                     except ManagementError:
                         pass
                 self.pool.submit(revoke)
-            self.event.emit(json.dumps({'type': 'locked'}))
+            self.event.emit(json.dumps({'type': 'locked', 'reason': reason}))
 
         def poll(self):
             if self.polling or self.closed:
@@ -231,19 +277,36 @@ def run(view='open', background=False, socket_path=SOCKET_PATH):
     bridge.copy_requested.connect(lambda value: app.clipboard().setText(value))
     bridge.open_requested.connect(lambda value: QDesktopServices.openUrl(QUrl(value)))
 
+    class ActivityObserver(QObject):
+        input_events = frozenset((QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick,
+                                  QEvent.Type.MouseMove, QEvent.Type.KeyPress, QEvent.Type.Wheel,
+                                  QEvent.Type.TouchBegin, QEvent.Type.TouchUpdate))
+
+        def eventFilter(self, watched, event):
+            if event.type() in self.input_events:
+                bridge.note_activity()
+            return False
+
+    activity_observer = ActivityObserver(app)
+    idle_timer = QTimer(app)
+    idle_timer.setInterval(1000)
+    idle_timer.timeout.connect(bridge.expire_if_idle)
+    idle_timer.start()
+
     class Window(QMainWindow):
         def closeEvent(self, event):
-            settings.setValue('geometry', self.saveGeometry())
+            if settings:
+                settings.setValue('geometry', self.saveGeometry())
             self.hide()
             bridge.lock_window()
             event.ignore()
 
     window = Window()
-    window.setWindowTitle('RDP Access Auth')
+    window.setWindowTitle('RDP Access Auth · ' + version + (' · 界面演示' if demo else ''))
     window.setWindowIcon(icon)
     window.resize(1040, 760)
     window.setMinimumSize(760, 560)
-    geometry = settings.value('geometry')
+    geometry = settings.value('geometry') if settings else None
     if geometry:
         window.restoreGeometry(geometry)
     webview = QWebEngineView(window)
@@ -258,14 +321,26 @@ def run(view='open', background=False, socket_path=SOCKET_PATH):
     page.setWebChannel(channel)
     webview.setPage(page)
     window.setCentralWidget(webview)
+
+    def observe_input_widgets():
+        # Observe known widgets only: application-wide Python event filters can
+        # recurse while PySide wraps WebEngine's internal QQuick objects.
+        for target in (window, webview, webview.focusProxy()):
+            if target is not None:
+                target.setMouseTracking(True)
+                target.installEventFilter(activity_observer)
+    observe_input_widgets()
+    webview.loadFinished.connect(lambda _: observe_input_widgets())
     tray = QSystemTrayIcon(icon, app)
-    tray.setToolTip('RDP Access Auth')
+    tray_label = 'RDP Access Auth' + (' · 演示模式' if demo else '')
+    tray.setToolTip(tray_label)
     menu = QMenu()
+    menu.installEventFilter(activity_observer)
     actions = {}
     for key, label in [('settings', '打开设置'), ('pause', '暂停服务'), ('restart', '重启服务'), ('exit', '退出')]:
         if key == 'exit':
             menu.addSeparator()
-        action = QAction(label, menu)
+        action = QAction('退出演示' if demo and key == 'exit' else label, menu)
         menu.addAction(action)
         actions[key] = action
     tray.setContextMenu(menu)
@@ -276,6 +351,14 @@ def run(view='open', background=False, socket_path=SOCKET_PATH):
         window.activateWindow()
         if action:
             bridge.event.emit(json.dumps({'type': 'navigate' if action == 'settings' else 'action', 'action': action}))
+
+    def show_demo():
+        if demo:
+            show_window()
+        else:
+            subprocess.Popen([sys.executable, str(assets.parent / 'rdp_manager.py'), 'demo'],
+                             start_new_session=True)
+    bridge.demo_requested.connect(show_demo)
 
     for key, action in actions.items():
         action.triggered.connect(lambda checked=False, name=key: show_window(name))
@@ -292,15 +375,20 @@ def run(view='open', background=False, socket_path=SOCKET_PATH):
                 show_window()
                 bridge.event.emit(json.dumps({'type': 'navigate', 'action': 'agents'}))
             seen_pending = count
-            tray.setToolTip('RDP Access Auth · ' + ('已暂停' if value['preferences'].get('paused') else '运行管理'))
+            tray.setToolTip(tray_label + ' · ' + ('已暂停' if value['preferences'].get('paused') else '运行管理'))
+            for key in ('pause', 'restart'):
+                actions[key].setEnabled(bool(value.get('configured')))
 
     bridge.event.connect(status_event)
     def apply_preferences(prefs):
         tray.setVisible(bool(prefs.get('show_tray', True)))
         actions['pause'].setText('继续服务' if prefs.get('paused') else '暂停服务')
-        settings.setValue('preferences', json.dumps(prefs))
+        if settings:
+            settings.setValue('preferences', json.dumps(prefs))
     bridge.preferences_changed.connect(apply_preferences)
     apply_preferences(initial['preferences'])
+    for key in ('pause', 'restart'):
+        actions[key].setEnabled(bool(initial.get('configured')))
 
     def system_theme():
         return 'light' if app.palette().window().color().lightness() > 128 else 'dark'
@@ -335,6 +423,7 @@ def run(view='open', background=False, socket_path=SOCKET_PATH):
     def quit_app():
         bridge.closed = True
         timer.stop()
+        idle_timer.stop()
         tray.hide()
         instance.close()
         app.quit()

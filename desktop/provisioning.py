@@ -275,6 +275,7 @@ class Provisioner:
         draft = {'hostname': params['hostname'], 'sakura_token': self.vault['sakura_api_token'],
                  'password_salt': salt, 'password_hash': hashed,
                  'session_key': self.state.get('session_key') or secrets.token_hex(32),
+                 'allow_passkey_registration': False,
                  'turnstile_site_key': params.get('turnstile_site_key', ''),
                  'turnstile_secret_key': self.vault.get('turnstile_secret_key', '') if params.get('turnstile_site_key') else '',
                  'local_admission': {'listen_port': plan['admission_port'], 'target_port': plan['rdp_port'], 'duration_seconds': 21600}}

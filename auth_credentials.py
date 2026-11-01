@@ -169,6 +169,7 @@ class Passkeys:
                 expected_rp_id=self.hostname, expected_origin=self.origin, credential_public_key=unb64(row[0]),
                 credential_current_sign_count=row[1], require_user_verification=True)
             db.execute('UPDATE passkeys SET sign_count=? WHERE id=?', (verified.new_sign_count, credential_id))
+        return credential_id
 
     def delete(self, credential_id):
         with closing(sqlite3.connect(self.path)) as db, db:

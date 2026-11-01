@@ -7,5 +7,6 @@
   "session_key": "GENERATE_WITH_rdp-auth_config_init_OR_gui",
   "sakura_token": "ENTER_WITH_rdp-auth_config_init_OR_gui",
   "turnstile_site_key": "",
-  "turnstile_secret_key": ""
+  "turnstile_secret_key": "",
+  "allow_passkey_registration": false
 }
